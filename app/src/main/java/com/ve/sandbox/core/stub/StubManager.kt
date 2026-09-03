@@ -41,8 +41,9 @@ object StubManager {
 
     fun isStubIntent(intent: Intent?): Boolean {
         if (intent == null) return false
+        if (intent.hasExtra(EXTRA_REAL_INTENT)) return true
         val componentName = intent.component?.className ?: return false
-        return isStubComponent(componentName) && intent.hasExtra(EXTRA_REAL_INTENT)
+        return isStubComponent(componentName)
     }
 
     /**
@@ -82,6 +83,9 @@ object StubManager {
     fun demasqueradeIntent(stubIntent: Intent?): Intent? {
         if (stubIntent == null || !stubIntent.hasExtra(EXTRA_REAL_INTENT)) return null
         return try {
+            try {
+                stubIntent.setExtrasClassLoader(StubManager::class.java.classLoader)
+            } catch (ignored: Throwable) {}
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 stubIntent.getParcelableExtra(EXTRA_REAL_INTENT, Intent::class.java)
             } else {

@@ -202,4 +202,33 @@ class VeInstrumentationTest {
         assertTrue("Guest Activity onCreate must be invoked", activity.wasOnCreateCalled)
         assertEquals("Guest Activity must see its own package name", guestPackage, activity.capturedPackageName)
     }
+
+    @Test
+    fun testDemasqueradedGuestActivityLaunch() {
+        // This reproduces the exact crash: ActivityThreadHook demasqueraded the intent in mH,
+        // so ActivityThread called newActivity with className = guestActivityClass and intent = realIntent.
+        // The host ClassLoader passed cannot find guestActivityClass.
+        val realIntent = Intent().apply {
+            component = ComponentName(guestPackage, guestActivityClass)
+        }
+
+        // Create an isolated ClassLoader that cannot find MockGuestActivity to simulate host ClassLoader
+        val hostClassLoader = object : ClassLoader(ClassLoader.getSystemClassLoader().parent) {
+            override fun findClass(name: String?): Class<*> {
+                throw ClassNotFoundException("Host classloader does not contain $name")
+            }
+        }
+
+        val activity = veInstrumentation.newActivity(
+            hostClassLoader,
+            guestActivityClass,
+            realIntent
+        )
+
+        assertNotNull("Activity must be instantiated via guest VirtualClassLoader", activity)
+        assertTrue(
+            "Expected MockGuestActivity but was ${activity.javaClass.name}",
+            activity is MockGuestActivity
+        )
+    }
 }

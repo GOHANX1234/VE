@@ -121,14 +121,40 @@ object ActivityThreadHook {
 
     private fun demasqueradeClientTransaction(transaction: Any) {
         try {
-            val getCallbacksMethod = transaction.javaClass.getDeclaredMethod("getCallbacks").apply {
-                isAccessible = true
-            }
-            val callbacks = getCallbacksMethod.invoke(transaction) as? List<*> ?: return
+            val callbacks = try {
+                val getCallbacksMethod = transaction.javaClass.getDeclaredMethod("getCallbacks").apply {
+                    isAccessible = true
+                }
+                getCallbacksMethod.invoke(transaction) as? List<*>
+            } catch (e: NoSuchMethodException) {
+                try {
+                    val getItemsMethod = transaction.javaClass.getDeclaredMethod("getTransactionItems").apply {
+                        isAccessible = true
+                    }
+                    getItemsMethod.invoke(transaction) as? List<*>
+                } catch (e2: Throwable) {
+                    try {
+                        val field = transaction.javaClass.getDeclaredField("mActivityCallbacks").apply { isAccessible = true }
+                        field.get(transaction) as? List<*>
+                    } catch (e3: Throwable) {
+                        try {
+                            val field = transaction.javaClass.getDeclaredField("mTransactionItems").apply { isAccessible = true }
+                            field.get(transaction) as? List<*>
+                        } catch (e4: Throwable) {
+                            null
+                        }
+                    }
+                }
+            } ?: return
 
             for (item in callbacks) {
                 if (item != null && item.javaClass.name.contains("LaunchActivityItem")) {
-                    val mIntentField = item.javaClass.getDeclaredField("mIntent").apply { isAccessible = true }
+                    val mIntentField = try {
+                        item.javaClass.getDeclaredField("mIntent").apply { isAccessible = true }
+                    } catch (e: NoSuchFieldException) {
+                        item.javaClass.superclass?.getDeclaredField("mIntent")?.apply { isAccessible = true }
+                    } ?: continue
+
                     val intent = mIntentField.get(item) as? Intent
                     if (StubManager.isStubIntent(intent)) {
                         val realIntent = StubManager.demasqueradeIntent(intent)

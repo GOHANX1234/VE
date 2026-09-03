@@ -160,32 +160,105 @@ class VeInstrumentation(
         className: String,
         intent: Intent
     ): Activity {
-        if (StubManager.isStubComponent(className) || StubManager.isStubIntent(intent)) {
-            val realIntent = StubManager.demasqueradeIntent(intent)
-            val realPkg = StubManager.extractTargetPackage(intent) ?: realIntent?.component?.packageName
-            val realClass = StubManager.extractTargetClass(intent) ?: realIntent?.component?.className
+        val isStub = StubManager.isStubComponent(className) || StubManager.isStubIntent(intent)
+        val realIntent = if (isStub) StubManager.demasqueradeIntent(intent) else intent
 
-            if (realPkg != null && realClass != null) {
-                val engine = try { VeEngine.get() } catch (e: Exception) { null }
-                val loadedPkg = engine?.getLoadedPackage(realPkg)
-                if (loadedPkg != null) {
-                    Log.i(TAG, "Swapping stub '$className' with real guest Activity: '$realClass'")
+        // 1. Determine target package
+        var targetPkg = if (isStub) {
+            StubManager.extractTargetPackage(intent) ?: realIntent?.component?.packageName
+        } else {
+            intent.component?.packageName?.takeIf { it != hostPackageName }
+                ?: StubManager.extractTargetPackage(intent)
+        }
+
+        // 2. Determine target class
+        var targetClass = if (isStub) {
+            StubManager.extractTargetClass(intent) ?: realIntent?.component?.className
+        } else {
+            if (!StubManager.isStubComponent(className)) className
+            else StubManager.extractTargetClass(intent) ?: realIntent?.component?.className
+        }
+
+        val engine = try { VeEngine.get() } catch (e: Exception) { null }
+
+        // If package not determined yet, check if any installed/loaded sandbox package owns this class
+        if (targetPkg == null && engine != null) {
+            val candidate = targetClass ?: className
+            targetPkg = engine.getInstalledPackages().firstOrNull { pkg ->
+                pkg.manifest.activities.any { it.name == candidate }
+            }?.packageName
+        }
+
+        // If it targets a guest sandbox package, load via VirtualClassLoader
+        if (targetPkg != null && targetPkg != hostPackageName) {
+            val loadedPkg = engine?.let { eng ->
+                eng.getLoadedPackage(targetPkg) ?: eng.getInstalledPackages().firstOrNull { it.packageName == targetPkg }?.let {
+                    try { eng.load(it) } catch (e: Throwable) { null }
+                }
+            }
+
+            if (loadedPkg != null) {
+                val finalClass = targetClass ?: className
+                Log.i(TAG, "Instantiating guest Activity: '$finalClass' for package '$targetPkg'")
+
+                val targetIntent = realIntent ?: intent
+                try {
+                    targetIntent.setExtrasClassLoader(loadedPkg.classLoader)
+                } catch (ignored: Throwable) {}
+
+                if (isStub && realIntent != null) {
+                    intent.component = realIntent.component
+                    intent.action = realIntent.action
+                    intent.data = realIntent.data
+                    intent.type = realIntent.type
+                    intent.flags = realIntent.flags
+                    realIntent.categories?.forEach { intent.addCategory(it) }
+                    realIntent.extras?.let { intent.putExtras(it) }
+                    intent.removeExtra(StubManager.EXTRA_REAL_INTENT)
+                    intent.removeExtra(StubManager.EXTRA_TARGET_PACKAGE)
+                    intent.removeExtra(StubManager.EXTRA_TARGET_CLASS)
+                }
+
+                try {
+                    return baseInstrumentation.newActivity(loadedPkg.classLoader, finalClass, targetIntent)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "baseInstrumentation.newActivity failed for $finalClass with guest ClassLoader, trying reflection: ${t.message}")
                     try {
-                        val guestActivityClass = loadedPkg.classLoader.loadClass(realClass)
-                        val activity = guestActivityClass.getDeclaredConstructor().newInstance() as Activity
-
-                        if (realIntent != null) {
-                            intent.component = realIntent.component
-                        }
-                        return activity
+                        val guestActivityClass = loadedPkg.classLoader.loadClass(finalClass)
+                        val constructor = guestActivityClass.getDeclaredConstructor().apply { isAccessible = true }
+                        return constructor.newInstance() as Activity
                     } catch (e: Throwable) {
-                        Log.e(TAG, "Failed to instantiate real guest Activity: $realClass", e)
+                        Log.e(TAG, "Failed to reflectively instantiate guest Activity: $finalClass", e)
+                        throw e
                     }
                 }
             }
         }
 
-        return baseInstrumentation.newActivity(cl, className, intent)
+        // Host activity or system component
+        try {
+            return baseInstrumentation.newActivity(cl, className, intent)
+        } catch (cnf: ClassNotFoundException) {
+            // Safety net: if host ClassLoader cannot find className, search all guest VirtualClassLoaders
+            if (engine != null) {
+                for (pkg in engine.getInstalledPackages()) {
+                    val loaded = engine.getLoadedPackage(pkg.packageName)
+                        ?: try { engine.load(pkg) } catch (e: Throwable) { null }
+                    if (loaded != null) {
+                        try {
+                            val clazz = loaded.classLoader.loadClass(className)
+                            Log.i(TAG, "Safety net: Resolved '$className' from guest package '${pkg.packageName}'")
+                            try {
+                                intent.setExtrasClassLoader(loaded.classLoader)
+                            } catch (ignored: Throwable) {}
+                            val constructor = clazz.getDeclaredConstructor().apply { isAccessible = true }
+                            return constructor.newInstance() as Activity
+                        } catch (ignored: ClassNotFoundException) {}
+                    }
+                }
+            }
+            throw cnf
+        }
     }
 
     // -------------------------------------------------------------
@@ -225,11 +298,13 @@ class VeInstrumentation(
         val targetPkgFromIntent = StubManager.extractTargetPackage(activity.intent)
             ?: activity.intent?.component?.packageName
 
-        val loadedPkg = if (targetPkgFromIntent != null && targetPkgFromIntent != hostPackageName) {
-            engine.getLoadedPackage(targetPkgFromIntent)
-        } else {
-            engine.getInstalledPackages().mapNotNull {
-                engine.getLoadedPackage(it.packageName)
+        val loadedPkg = (if (targetPkgFromIntent != null && targetPkgFromIntent != hostPackageName) {
+            engine.getLoadedPackage(targetPkgFromIntent) ?: engine.getInstalledPackages().firstOrNull { it.packageName == targetPkgFromIntent }?.let {
+                try { engine.load(it) } catch (e: Throwable) { null }
+            }
+        } else null) ?: run {
+            engine.getInstalledPackages().mapNotNull { pkg ->
+                engine.getLoadedPackage(pkg.packageName) ?: try { engine.load(pkg) } catch (e: Throwable) { null }
             }.firstOrNull { pkg ->
                 pkg.manifest.activities.any { it.name == className } ||
                         activityClass.classLoader == pkg.classLoader
@@ -266,7 +341,38 @@ class VeInstrumentation(
                 Log.d(TAG, "Successfully bound guest Application to $className")
             }
 
-            // 4. Apply guest Activity theme if declared
+            // 4. Update Activity.mIntent and mComponent if needed
+            val mIntentField = findFieldInHierarchy(activity.javaClass, "mIntent")
+            mIntentField?.let { field ->
+                field.isAccessible = true
+                val currentIntent = field.get(activity) as? Intent
+                if (currentIntent != null && StubManager.isStubIntent(currentIntent)) {
+                    val demasqueraded = StubManager.demasqueradeIntent(currentIntent)
+                    if (demasqueraded != null) {
+                        field.set(activity, demasqueraded)
+                    }
+                }
+            }
+
+            val mComponentField = findFieldInHierarchy(activity.javaClass, "mComponent")
+            mComponentField?.let { field ->
+                field.isAccessible = true
+                val currentComp = field.get(activity) as? ComponentName
+                if (currentComp == null || StubManager.isStubComponent(currentComp.className)) {
+                    field.set(activity, ComponentName(loadedPkg.packageName, className))
+                }
+            }
+
+            val mActivityInfoField = findFieldInHierarchy(activity.javaClass, "mActivityInfo")
+            mActivityInfoField?.let { field ->
+                field.isAccessible = true
+                val comp = loadedPkg.manifest.activities.firstOrNull { it.name == className }
+                if (comp != null) {
+                    field.set(activity, com.ve.sandbox.core.hook.PackageInfoSynthesizer.buildActivityInfo(loadedPkg, comp))
+                }
+            }
+
+            // 5. Apply guest Activity theme if declared
             try {
                 val comp = loadedPkg.manifest.activities.firstOrNull { it.name == className }
                 val themeResName = comp?.theme ?: loadedPkg.manifest.applicationTheme
