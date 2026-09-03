@@ -1,3 +1,6 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -21,9 +24,32 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val keystorePropsFile = rootProject.file("keystore.properties")
+            if (keystorePropsFile.exists()) {
+                val properties = Properties()
+                FileInputStream(keystorePropsFile).use { properties.load(it) }
+                storeFile = rootProject.file(properties.getProperty("storeFile", "keystore/release.keystore"))
+                storePassword = properties.getProperty("storePassword", "ve_release_pass")
+                keyAlias = properties.getProperty("keyAlias", "ve-release")
+                keyPassword = properties.getProperty("keyPassword", "ve_release_pass")
+            } else {
+                storeFile = rootProject.file("keystore/release.keystore")
+                storePassword = "ve_release_pass"
+                keyAlias = "ve-release"
+                keyPassword = "ve_release_pass"
+            }
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
