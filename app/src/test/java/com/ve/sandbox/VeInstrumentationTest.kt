@@ -231,4 +231,56 @@ class VeInstrumentationTest {
             activity is MockGuestActivity
         )
     }
+
+    @Test
+    fun testGuestFirstClassLoaderDelegation() {
+        var findClassCalled = false
+
+        val dummyParent = object : ClassLoader(javaClass.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> {
+                return super.loadClass(name, resolve)
+            }
+        }
+
+        val testLoader = object : com.ve.sandbox.core.loader.GuestDexClassLoader(
+            "",
+            null,
+            null,
+            dummyParent
+        ) {
+            override fun findClass(name: String): Class<*> {
+                findClassCalled = true
+                if (name == "kotlin.jvm.internal.Intrinsics") {
+                    return TestGuestIntrinsics::class.java
+                }
+                throw ClassNotFoundException(name)
+            }
+        }
+
+        // 1. kotlin.jvm.internal.Intrinsics must search guest APK first (Guest-First)
+        findClassCalled = false
+        val intrinsicsClass = testLoader.loadClass("kotlin.jvm.internal.Intrinsics")
+        assertTrue("findClass must be called first for kotlin.* classes", findClassCalled)
+        assertEquals(TestGuestIntrinsics::class.java, intrinsicsClass)
+
+        // 2. Framework class (java.lang.String) must delegate to system without calling findClass
+        findClassCalled = false
+        val stringClass = testLoader.loadClass("java.lang.String")
+        assertFalse("findClass must NOT be called for java.lang.String", findClassCalled)
+        assertEquals(String::class.java, stringClass)
+
+        // 3. Android platform class (android.app.Activity) must delegate to system without calling findClass
+        findClassCalled = false
+        val activityClass = testLoader.loadClass("android.app.Activity")
+        assertFalse("findClass must NOT be called for android.app.Activity", findClassCalled)
+        assertEquals(android.app.Activity::class.java, activityClass)
+
+        // 4. Host class (com.ve.sandbox.core.stub.StubActivity) must delegate to host parent
+        findClassCalled = false
+        val stubClass = testLoader.loadClass("com.ve.sandbox.core.stub.StubActivity")
+        assertFalse("findClass must NOT be called for host com.ve.sandbox.* classes", findClassCalled)
+        assertEquals(StubActivity::class.java, stubClass)
+    }
+
+    class TestGuestIntrinsics
 }

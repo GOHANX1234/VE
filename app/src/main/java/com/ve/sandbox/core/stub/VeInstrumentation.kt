@@ -201,6 +201,10 @@ class VeInstrumentation(
                 val finalClass = targetClass ?: className
                 Log.i(TAG, "Instantiating guest Activity: '$finalClass' for package '$targetPkg'")
 
+                try {
+                    Thread.currentThread().contextClassLoader = loadedPkg.classLoader
+                } catch (ignored: Throwable) {}
+
                 val targetIntent = realIntent ?: intent
                 try {
                     targetIntent.setExtrasClassLoader(loadedPkg.classLoader)
@@ -312,6 +316,10 @@ class VeInstrumentation(
         } ?: return
 
         Log.i(TAG, "Injecting ProxyContext & Resources into guest Activity: $className")
+
+        try {
+            Thread.currentThread().contextClassLoader = loadedPkg.classLoader
+        } catch (ignored: Throwable) {}
 
         val proxyContext = engine.getProxyContext(loadedPkg.packageName) ?: return
 

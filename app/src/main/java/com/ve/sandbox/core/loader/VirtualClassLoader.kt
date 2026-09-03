@@ -82,7 +82,7 @@ class VirtualClassLoader(
         parent: ClassLoader
     ): ClassLoader {
         return try {
-            DexClassLoader(dexPath, optDir, libPath, parent)
+            GuestDexClassLoader(dexPath, optDir, libPath, parent)
         } catch (stubEx: RuntimeException) {
             // Check if running in desktop JVM (unit test environment without Android runtime)
             if (stubEx.message?.contains("Stub") == true) {
@@ -111,5 +111,80 @@ class VirtualClassLoader(
         val clazz = loadClass(className)
         val constructor = clazz.getDeclaredConstructor().apply { isAccessible = true }
         return constructor.newInstance() as T
+    }
+}
+
+/**
+ * GuestDexClassLoader: Implements Guest-First (Child-First) class loading with
+ * Android platform framework delegation.
+ *
+ * Mental Model:
+ * Standard Java/Android ClassLoaders use Parent-First delegation. If the host sandbox app
+ * bundles common libraries (kotlin-stdlib, androidx, etc.), the parent (host) ClassLoader
+ * would intercept and return the host's version of the class.
+ *
+ * When an obfuscated guest app or game (e.g. Free Fire Max compiled with IL2CPP / Unity) calls
+ * obfuscated or version-specific methods (such as Intrinsics.a(Object, Object)), the host's
+ * library would throw NoSuchMethodError because it lacks the guest's specific method signatures.
+ *
+ * By searching the guest APK(s) FIRST for non-framework classes (kotlin.*, androidx.*, app code),
+ * each guest application runs in its own pristine bytecode environment without library conflicts.
+ */
+open class GuestDexClassLoader(
+    dexPath: String,
+    optimizedDirectory: String?,
+    librarySearchPath: String?,
+    parent: ClassLoader
+) : DexClassLoader(dexPath, optimizedDirectory, librarySearchPath, parent) {
+
+    override fun loadClass(name: String, resolve: Boolean): Class<*> {
+        // 1. Return already loaded class in this ClassLoader
+        var clazz = findLoadedClass(name)
+        if (clazz != null) return clazz
+
+        // 2. Android platform and Java runtime framework classes MUST come from system BootClassLoader
+        if (isSystemFrameworkClass(name)) {
+            return super.loadClass(name, resolve)
+        }
+
+        // 3. Host container classes must be loaded by the host ClassLoader
+        if (name.startsWith("com.ve.sandbox.")) {
+            return super.loadClass(name, resolve)
+        }
+
+        // 4. Guest-First: search the guest APK(s) first for all application and bundled library classes
+        // (e.g. kotlin.*, androidx.*, com.dts.*, third-party SDKs)
+        try {
+            clazz = findClass(name)
+            if (clazz != null) {
+                return clazz
+            }
+        } catch (ignored: ClassNotFoundException) {
+            // Not in guest APK, proceed to parent fallback
+        } catch (ignored: NoClassDefFoundError) {
+            // Fallback
+        }
+
+        // 5. Fallback to parent ClassLoader
+        return super.loadClass(name, resolve)
+    }
+
+    private fun isSystemFrameworkClass(name: String): Boolean {
+        // Legacy Android support library is bundled in APKs, not part of platform
+        if (name.startsWith("android.support.")) return false
+
+        return name.startsWith("android.") ||
+                name.startsWith("java.") ||
+                name.startsWith("javax.") ||
+                name.startsWith("dalvik.") ||
+                name.startsWith("sun.") ||
+                name.startsWith("libcore.") ||
+                name.startsWith("org.apache.http.") ||
+                name.startsWith("org.json.") ||
+                name.startsWith("org.w3c.dom.") ||
+                name.startsWith("org.xml.") ||
+                name.startsWith("org.xmlpull.") ||
+                name.startsWith("com.android.internal.") ||
+                name.startsWith("com.android.org.")
     }
 }
