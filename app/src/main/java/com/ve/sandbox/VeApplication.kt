@@ -12,6 +12,23 @@ class VeApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        // Install global uncaught exception logger to capture guest app and container crash reports
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val sw = java.io.StringWriter()
+                val pw = java.io.PrintWriter(sw)
+                throwable.printStackTrace(pw)
+                val stackTrace = sw.toString()
+                android.util.Log.e("VE_CRASH", "FATAL UNCAUGHT EXCEPTION in thread ${thread.name}:\n$stackTrace")
+                java.io.File(filesDir, "last_crash.txt").writeText(
+                    "Crash in thread '${thread.name}' (${throwable.javaClass.name}):\n${throwable.message}\n\n$stackTrace"
+                )
+            } catch (ignored: Throwable) {}
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
+
         // Initialize Hidden API bypass early in process lifecycle
         HiddenApiManager.unseal()
         // Initialize VE Engine

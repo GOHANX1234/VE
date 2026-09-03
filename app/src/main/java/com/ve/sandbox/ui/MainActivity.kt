@@ -137,6 +137,17 @@ fun VeLauncherScreen() {
         }
     }
 
+    LaunchedEffect(Unit) {
+        try {
+            val crashFile = File(context.filesDir, "last_crash.txt")
+            if (crashFile.exists()) {
+                val content = crashFile.readText()
+                executionLog = "⚠️ CRASH LOG FROM PREVIOUS RUN:\n$content"
+                crashFile.delete()
+            }
+        } catch (ignored: Throwable) {}
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(

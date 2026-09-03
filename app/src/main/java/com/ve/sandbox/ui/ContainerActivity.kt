@@ -166,40 +166,68 @@ class ContainerActivity : Activity() {
         val proxy = proxyContext ?: return
 
         try {
-            // Load and instantiate the guest Activity
-            val activityClass = loaded.classLoader.loadClass(className)
-            val guestActivity = activityClass.getDeclaredConstructor().newInstance() as Activity
-            guestActivityInstance = guestActivity
-
-            // Inject ProxyContext into mBase
-            try {
-                val mBaseField = Context::class.java.getDeclaredField("mBase").apply { isAccessible = true }
-                mBaseField.set(guestActivity, proxy)
-            } catch (e: Throwable) {
-                val mBaseField = android.content.ContextWrapper::class.java.getDeclaredField("mBase").apply { isAccessible = true }
-                mBaseField.set(guestActivity, proxy)
+            // Check if there is a layout resource for this Activity
+            val simpleName = className.substringAfterLast('.').lowercase()
+            var layoutResId = loaded.resources.getIdentifier("activity_$simpleName", "layout", loaded.packageName)
+            if (layoutResId == 0) {
+                layoutResId = loaded.resources.getIdentifier("activity_target_main", "layout", loaded.packageName)
+            }
+            if (layoutResId == 0) {
+                layoutResId = loaded.resources.getIdentifier("main", "layout", loaded.packageName)
             }
 
-            // Inflate guest layout using guest Resources and LayoutInflater
-            val inflater = proxy.getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
-            val layoutResId = loaded.resources.getIdentifier("activity_target_main", "layout", loaded.packageName)
-
             if (layoutResId != 0) {
+                val inflater = proxy.getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
                 val guestView = inflater.inflate(layoutResId, container, false)
                 container.addView(guestView)
                 Log.i(TAG, "Successfully inflated guest layout resource ID: $layoutResId into ContainerActivity")
             } else {
-                // Fallback: render guest info card
-                val fallbackText = TextView(proxy).apply {
-                    text = "Guest Activity '$className' is mounted in Sandbox!\n" +
-                            "Package: ${loaded.packageName}\n" +
-                            "ClassLoader: ${loaded.classLoader.javaClass.simpleName}\n" +
-                            "Resources: ${loaded.resources.javaClass.simpleName}"
-                    textSize = 16f
-                    setTextColor(0xFF000000.toInt())
+                // Render interactive sandbox supervisor card with real Stub Window launcher
+                val cardLayout = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
                     setPadding(48, 48, 48, 48)
                 }
-                container.addView(fallbackText)
+
+                val titleText = TextView(this).apply {
+                    text = "Guest Activity Mounted in Sandbox Frame"
+                    textSize = 18f
+                    setTextColor(0xFF2E7D32.toInt())
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    setPadding(0, 0, 0, 16)
+                }
+                cardLayout.addView(titleText)
+
+                val infoText = TextView(this).apply {
+                    text = "• Package: ${loaded.packageName}\n" +
+                            "• Target Activity: $className\n" +
+                            "• Archive Type: ${loaded.archiveType}\n" +
+                            "• Multi-Splits: ${loaded.splitApkPaths.size} APKs mounted\n" +
+                            "• ClassLoader: ${loaded.classLoader.javaClass.simpleName}\n" +
+                            "• Resources: ${loaded.resources.javaClass.simpleName}\n\n" +
+                            "This application uses a full-screen native Surface/OpenGL graphics engine (e.g. Unity 3D / Game Engine). Standard Android container embedding hosts XML layouts; for hardware-accelerated 3D games, launch via Full Native Window (Stub)."
+                    textSize = 14f
+                    setTextColor(0xFF333333.toInt())
+                    setLineSpacing(6f, 1f)
+                    setPadding(0, 0, 0, 24)
+                }
+                cardLayout.addView(infoText)
+
+                val launchStubBtn = android.widget.Button(this).apply {
+                    text = "▶ Launch in Full Native Window (Stub)"
+                    setBackgroundColor(0xFF2E7D32.toInt())
+                    setTextColor(0xFFFFFFFF.toInt())
+                    setOnClickListener {
+                        try {
+                            val engine = VeEngine.get()
+                            engine.launchGuestActivity(this@ContainerActivity, loaded.packageName, className)
+                            finish()
+                        } catch (e: Throwable) {
+                            infoText.text = "Error launching Stub Activity: ${e.message}"
+                        }
+                    }
+                }
+                cardLayout.addView(launchStubBtn)
+                container.addView(cardLayout)
             }
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to mount guest Activity UI", e)

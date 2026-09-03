@@ -67,4 +67,5 @@ data class LoadedPackage(
     val packageName: String get() = installedPackage.packageName
     val manifest: ParsedManifest get() = installedPackage.manifest
     val archiveType: ArchiveType get() = installedPackage.archiveType
+    val splitApkPaths: List<String> get() = installedPackage.splitApkPaths
 }
