@@ -34,6 +34,18 @@ class VirtualClassLoader(
     private val dexPathString = apkPaths.joinToString(File.pathSeparator)
     private val optimizedDir = File(cacheDir, "dex_opt").apply { mkdirs() }
 
+    init {
+        // Android 14 (API level 34) Security Hardening:
+        // Dynamically loaded DEX/APK files must be read-only.
+        // Otherwise, ART throws: SecurityException: Writable dex file '...' is not allowed.
+        for (path in apkPaths) {
+            val f = File(path)
+            if (f.exists()) {
+                f.setReadOnly()
+            }
+        }
+    }
+
     val classLoader: ClassLoader = createDexClassLoader(
         dexPathString,
         optimizedDir.absolutePath,

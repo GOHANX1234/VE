@@ -91,6 +91,14 @@ class VeEngine private constructor(private val appContext: Context) {
 
         Log.i(TAG, "Loading package into sandbox: ${installedPackage.packageName}")
 
+        // Android 14 Security Hardening: Ensure all APKs are marked read-only before DexClassLoader
+        for (path in installedPackage.allApkPaths) {
+            val f = File(path)
+            if (f.exists()) {
+                f.setReadOnly()
+            }
+        }
+
         // 1. Dynamic Dex ClassLoader
         val virtualClassLoader = VirtualClassLoader(
             apkPaths = installedPackage.allApkPaths,
@@ -156,10 +164,18 @@ class VeEngine private constructor(private val appContext: Context) {
         context.startActivity(targetIntent)
     }
 
+    private fun makeWritableRecursively(file: File) {
+        if (file.isDirectory) {
+            file.listFiles()?.forEach { makeWritableRecursively(it) }
+        }
+        file.setWritable(true)
+    }
+
     fun clearData(packageName: String): Boolean {
         val installed = installedPackages[packageName] ?: return false
         val dataDir = File(installed.dataDir)
         return if (dataDir.exists()) {
+            makeWritableRecursively(dataDir)
             dataDir.deleteRecursively()
             dataDir.mkdirs()
         } else {
@@ -172,6 +188,7 @@ class VeEngine private constructor(private val appContext: Context) {
         loadedPackages.remove(packageName)
         val sandboxPkgDir = File(sandboxRootDir, packageName)
         if (sandboxPkgDir.exists()) {
+            makeWritableRecursively(sandboxPkgDir)
             sandboxPkgDir.deleteRecursively()
         }
         return true

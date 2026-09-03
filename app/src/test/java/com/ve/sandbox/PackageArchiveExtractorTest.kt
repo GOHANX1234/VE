@@ -84,5 +84,16 @@ class PackageArchiveExtractorTest {
         assertEquals("com.target.sampleapp", installed.packageName)
         assertEquals(ArchiveType.APKS, installed.archiveType)
         assertTrue(File(installed.baseApkPath).exists())
+        assertFalse("Base APK must be read-only for Android 14 ART security", File(installed.baseApkPath).canWrite())
+    }
+
+    @Test
+    fun testAndroid14ReadOnlyDexEnforcement() {
+        val apkFile = File(assetsDir, "sample_app.apk")
+        val installed = extractor.installArchive(apkFile)
+
+        val baseFile = File(installed.baseApkPath)
+        assertTrue(baseFile.exists())
+        assertFalse("Dynamic DEX file must not be writable on Android 14+", baseFile.canWrite())
     }
 }

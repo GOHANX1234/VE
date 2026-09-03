@@ -109,11 +109,21 @@ class PackageArchiveExtractor(
         }
     }
 
+    private fun copyAndMarkReadOnly(source: File, destination: File) {
+        if (destination.exists()) {
+            destination.setWritable(true)
+            destination.delete()
+        }
+        source.copyTo(destination, overwrite = true)
+        // Android 14 Security Hardening: dynamic DEX/APK files must be read-only
+        destination.setReadOnly()
+    }
+
     private fun installSingleApk(apkFile: File): InstalledPackage {
         val manifest = extractAndParseManifest(apkFile)
         val packageDir = File(appRootDir, manifest.packageName).apply { mkdirs() }
         val targetBaseApk = File(packageDir, "base.apk")
-        apkFile.copyTo(targetBaseApk, overwrite = true)
+        copyAndMarkReadOnly(apkFile, targetBaseApk)
 
         val nativeLibDir = File(packageDir, "lib").apply { mkdirs() }
         extractNativeLibraries(targetBaseApk, nativeLibDir)
@@ -148,7 +158,7 @@ class PackageArchiveExtractor(
         val manifest = extractAndParseManifest(baseApkFile)
         val packageDir = File(appRootDir, manifest.packageName).apply { mkdirs() }
         val targetBaseApk = File(packageDir, "base.apk")
-        baseApkFile.copyTo(targetBaseApk, overwrite = true)
+        copyAndMarkReadOnly(baseApkFile, targetBaseApk)
 
         val splitsDir = File(packageDir, "splits").apply { mkdirs() }
         val splitPaths = mutableListOf<String>()
@@ -157,7 +167,7 @@ class PackageArchiveExtractor(
         for (apk in apkFiles) {
             if (apk.absolutePath != baseApkFile.absolutePath) {
                 val targetSplit = File(splitsDir, apk.name)
-                apk.copyTo(targetSplit, overwrite = true)
+                copyAndMarkReadOnly(apk, targetSplit)
                 splitPaths.add(targetSplit.absolutePath)
                 extractNativeLibraries(targetSplit, nativeLibDir)
             }
@@ -190,7 +200,7 @@ class PackageArchiveExtractor(
         val packageDir = File(appRootDir, manifest.packageName).apply { mkdirs() }
 
         val targetBaseApk = File(packageDir, "base.apk")
-        baseApkFile.copyTo(targetBaseApk, overwrite = true)
+        copyAndMarkReadOnly(baseApkFile, targetBaseApk)
 
         val splitsDir = File(packageDir, "splits").apply { mkdirs() }
         val splitPaths = mutableListOf<String>()
@@ -199,7 +209,7 @@ class PackageArchiveExtractor(
         for (apk in apkFiles) {
             if (apk.absolutePath != baseApkFile.absolutePath) {
                 val targetSplit = File(splitsDir, apk.name)
-                apk.copyTo(targetSplit, overwrite = true)
+                copyAndMarkReadOnly(apk, targetSplit)
                 splitPaths.add(targetSplit.absolutePath)
                 extractNativeLibraries(targetSplit, nativeLibDir)
             }
@@ -240,7 +250,7 @@ class PackageArchiveExtractor(
         val packageDir = File(appRootDir, manifest.packageName).apply { mkdirs() }
 
         val targetBaseApk = File(packageDir, "base.apk")
-        baseApkFile.copyTo(targetBaseApk, overwrite = true)
+        copyAndMarkReadOnly(baseApkFile, targetBaseApk)
 
         val splitsDir = File(packageDir, "splits").apply { mkdirs() }
         val splitPaths = mutableListOf<String>()
@@ -249,7 +259,7 @@ class PackageArchiveExtractor(
         for (apk in apkFiles) {
             if (apk.absolutePath != baseApkFile.absolutePath) {
                 val targetSplit = File(splitsDir, apk.name)
-                apk.copyTo(targetSplit, overwrite = true)
+                copyAndMarkReadOnly(apk, targetSplit)
                 splitPaths.add(targetSplit.absolutePath)
                 extractNativeLibraries(targetSplit, nativeLibDir)
             }
