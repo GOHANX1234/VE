@@ -1,0 +1,17 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/app/build
+/test-target-app/build
+/captures
+.externalNativeBuild
+.cxx
+*.hprof
+.kotlin
+
+# Allow the committed debug apks in the apk/ directory
+!/apk/
+!/apk/*.apk

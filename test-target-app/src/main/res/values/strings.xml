@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Sample Target Guest App</string>
+    <string name="welcome_message">Hello from inside the VE Sandbox!</string>
+    <string name="secret_token">TOKEN_VE_SANDBOX_SUCCESS_9981</string>
+</resources>
