@@ -1,6 +1,7 @@
 package com.ve.sandbox.core.parser
 
 import android.os.Build
+import android.util.Log
 import com.ve.sandbox.core.model.ArchiveType
 import com.ve.sandbox.core.model.InstalledPackage
 import com.ve.sandbox.core.model.ParsedManifest
@@ -24,48 +25,84 @@ class PackageArchiveExtractor(
     private val appRootDir: File,
     private val manifestParser: AndroidBinaryXmlParser = AndroidBinaryXmlParser()
 ) {
+    companion object {
+        private const val TAG = "PackageArchiveExtractor"
+    }
 
+    /**
+     * Inspects the internal ZIP structure first to accurately detect the package format
+     * regardless of whether the file extension was preserved, missing, or renamed.
+     */
     fun detectArchiveType(file: File): ArchiveType {
+        try {
+            ZipFile(file).use { zip ->
+                val hasRootManifest = zip.getEntry("AndroidManifest.xml") != null
+                val hasManifestJson = zip.getEntry("manifest.json") != null
+                val hasInfoJson = zip.getEntry("info.json") != null
+                val hasChildApks = zip.entries().asSequence().any {
+                    !it.isDirectory && it.name.endsWith(".apk", ignoreCase = true)
+                }
+                val hasSplitsDir = zip.entries().asSequence().any {
+                    it.name.startsWith("splits/", ignoreCase = true)
+                }
+
+                // If it contains child APKs or splits/ directory, it is a multi-split bundle!
+                if (hasSplitsDir || hasChildApks) {
+                    return when {
+                        hasManifestJson || file.name.endsWith(".xapk", ignoreCase = true) -> ArchiveType.XAPK
+                        hasInfoJson || file.name.endsWith(".apkm", ignoreCase = true) -> ArchiveType.APKM
+                        else -> ArchiveType.APKS
+                    }
+                }
+
+                if (hasManifestJson) return ArchiveType.XAPK
+                if (hasInfoJson) return ArchiveType.APKM
+                if (hasRootManifest) return ArchiveType.APK
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to inspect ZIP structure for ${file.name}: ${e.message}")
+        }
+
+        // Fallback: examine file extension
         val name = file.name.lowercase()
         return when {
-            name.endsWith(".apk") -> ArchiveType.APK
             name.endsWith(".apks") -> ArchiveType.APKS
-            name.endsWith(".apkm") -> ArchiveType.APKM
             name.endsWith(".xapk") -> ArchiveType.XAPK
-            else -> {
-                // Peek inside ZIP to detect
-                try {
-                    ZipFile(file).use { zip ->
-                        when {
-                            zip.getEntry("manifest.json") != null -> ArchiveType.XAPK
-                            zip.getEntry("info.json") != null -> ArchiveType.APKM
-                            zip.entries().asSequence().any { it.name.startsWith("splits/") } -> ArchiveType.APKS
-                            zip.getEntry("AndroidManifest.xml") != null -> ArchiveType.APK
-                            else -> ArchiveType.UNKNOWN
-                        }
-                    }
-                } catch (e: Exception) {
-                    ArchiveType.UNKNOWN
-                }
-            }
+            name.endsWith(".apkm") -> ArchiveType.APKM
+            name.endsWith(".apk") -> ArchiveType.APK
+            else -> ArchiveType.UNKNOWN
         }
     }
 
     fun installArchive(sourceArchive: File): InstalledPackage {
         val archiveType = detectArchiveType(sourceArchive)
-        if (archiveType == ArchiveType.UNKNOWN) {
-            throw IllegalArgumentException("Unsupported package archive: ${sourceArchive.name}")
-        }
-
-        // Temporary staging to find manifest and determine package name
         val tempDir = File(appRootDir, "temp_staging_${System.currentTimeMillis()}").apply { mkdirs() }
         try {
             return when (archiveType) {
-                ArchiveType.APK -> installSingleApk(sourceArchive)
+                ArchiveType.APK -> {
+                    try {
+                        installSingleApk(sourceArchive)
+                    } catch (e: IllegalArgumentException) {
+                        // Fallback: if AndroidManifest.xml is missing at root, it might be an APKS named as .apk
+                        Log.w(TAG, "Single APK installation failed for ${sourceArchive.name}, retrying as APKS bundle: ${e.message}")
+                        installApks(sourceArchive, tempDir)
+                    }
+                }
                 ArchiveType.APKS -> installApks(sourceArchive, tempDir)
                 ArchiveType.XAPK -> installXapk(sourceArchive, tempDir)
                 ArchiveType.APKM -> installApkm(sourceArchive, tempDir)
-                ArchiveType.UNKNOWN -> throw IllegalStateException()
+                ArchiveType.UNKNOWN -> {
+                    // Fail-safe attempt as APKS then single APK
+                    try {
+                        installApks(sourceArchive, tempDir)
+                    } catch (e: Exception) {
+                        try {
+                            installSingleApk(sourceArchive)
+                        } catch (e2: Exception) {
+                            throw IllegalArgumentException("Unsupported package archive: ${sourceArchive.name}")
+                        }
+                    }
+                }
             }
         } finally {
             tempDir.deleteRecursively()
@@ -249,15 +286,18 @@ class PackageArchiveExtractor(
 
     private fun extractAndParseManifest(apkFile: File): ParsedManifest {
         ZipFile(apkFile).use { zip ->
-            val manifestEntry = zip.getEntry("AndroidManifest.xml")
+            val entry = zip.getEntry("AndroidManifest.xml")
                 ?: throw IllegalArgumentException("Missing AndroidManifest.xml in ${apkFile.name}")
-            val bytes = zip.getInputStream(manifestEntry).use { it.readBytes() }
-            return manifestParser.parse(bytes)
+
+            zip.getInputStream(entry).use { input ->
+                val bytes = input.readBytes()
+                return manifestParser.parse(bytes)
+            }
         }
     }
 
     private fun extractNativeLibraries(apkFile: File, targetLibDir: File) {
-        val targetAbis = getSupportedAbis()
+        val supportedAbis = getSupportedAbis()
         ZipFile(apkFile).use { zip ->
             val entries = zip.entries()
             while (entries.hasMoreElements()) {
@@ -267,7 +307,7 @@ class PackageArchiveExtractor(
                     if (parts.size == 3) {
                         val abi = parts[1]
                         val soName = parts[2]
-                        if (targetAbis.contains(abi)) {
+                        if (supportedAbis.contains(abi)) {
                             val abiDir = File(targetLibDir, abi).apply { mkdirs() }
                             val outFile = File(abiDir, soName)
                             zip.getInputStream(entry).use { input ->
@@ -283,26 +323,28 @@ class PackageArchiveExtractor(
     }
 
     private fun getSupportedAbis(): List<String> {
-        return try {
-            Build.SUPPORTED_ABIS.toList()
-        } catch (e: Throwable) {
-            // JVM fallback for unit tests
-            listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+        val abis = mutableListOf<String>()
+        if (Build.SUPPORTED_ABIS != null) {
+            abis.addAll(Build.SUPPORTED_ABIS)
         }
+        if (abis.isEmpty()) {
+            abis.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86"))
+        }
+        return abis
     }
 
-    private fun unzip(zipFile: File, destDir: File) {
+    private fun unzip(zipFile: File, targetDir: File) {
         ZipFile(zipFile).use { zip ->
             val entries = zip.entries()
             while (entries.hasMoreElements()) {
                 val entry = entries.nextElement()
-                val entryFile = File(destDir, entry.name)
+                val targetFile = File(targetDir, entry.name)
                 if (entry.isDirectory) {
-                    entryFile.mkdirs()
+                    targetFile.mkdirs()
                 } else {
-                    entryFile.parentFile?.mkdirs()
+                    targetFile.parentFile?.mkdirs()
                     zip.getInputStream(entry).use { input ->
-                        FileOutputStream(entryFile).use { output ->
+                        FileOutputStream(targetFile).use { output ->
                             input.copyTo(output)
                         }
                     }

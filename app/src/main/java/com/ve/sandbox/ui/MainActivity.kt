@@ -72,8 +72,32 @@ fun VeLauncherScreen() {
             isBusy = true
             executionLog = "Importing package from storage: $uri..."
             try {
-                val fileName = "picked_${System.currentTimeMillis()}.apk"
-                val cacheFile = File(context.cacheDir, fileName)
+                // Query real display name and extension from ContentResolver
+                var originalName: String? = null
+                try {
+                    context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            if (nameIdx != -1) {
+                                originalName = cursor.getString(nameIdx)
+                            }
+                        }
+                    }
+                } catch (e: Throwable) {
+                    // Fallback
+                }
+
+                if (originalName.isNullOrBlank()) {
+                    originalName = uri.lastPathSegment?.substringAfterLast('/')
+                }
+
+                val safeFileName = if (!originalName.isNullOrBlank()) {
+                    originalName!!.replace("[^a-zA-Z0-9._-]".toRegex(), "_")
+                } else {
+                    "picked_${System.currentTimeMillis()}.apks"
+                }
+
+                val cacheFile = File(context.cacheDir, safeFileName)
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(cacheFile).use { output ->
                         input.copyTo(output)

@@ -66,4 +66,23 @@ class PackageArchiveExtractorTest {
         assertEquals(ArchiveType.APKM, installed.archiveType)
         assertTrue(File(installed.baseApkPath).exists())
     }
+
+    @Test
+    fun testInstallApksWithMisleadingApkExtension() {
+        val apksFile = File(assetsDir, "sample_app.apks")
+        assertTrue(apksFile.exists())
+
+        // Create a disguised copy named with .apk extension (reproducing user scenario)
+        val disguisedFile = File(sandboxDir, "picked_1788423011650.apk")
+        apksFile.copyTo(disguisedFile, overwrite = true)
+        assertTrue(disguisedFile.exists())
+
+        val detectedType = extractor.detectArchiveType(disguisedFile)
+        assertEquals("Should accurately detect APKS despite .apk filename", ArchiveType.APKS, detectedType)
+
+        val installed = extractor.installArchive(disguisedFile)
+        assertEquals("com.target.sampleapp", installed.packageName)
+        assertEquals(ArchiveType.APKS, installed.archiveType)
+        assertTrue(File(installed.baseApkPath).exists())
+    }
 }
