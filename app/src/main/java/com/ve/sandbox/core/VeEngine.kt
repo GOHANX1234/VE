@@ -59,9 +59,47 @@ class VeEngine private constructor(private val appContext: Context) {
                 val baseApk = File(pkgDir, "base.apk")
                 if (baseApk.exists()) {
                     try {
-                        val installed = archiveExtractor.installArchive(baseApk)
+                        val manifest = com.ve.sandbox.core.parser.AndroidBinaryXmlParser().parse(
+                            java.util.zip.ZipFile(baseApk).use { zip ->
+                                val entry = zip.getEntry("AndroidManifest.xml")
+                                    ?: return@use null
+                                zip.getInputStream(entry).use { it.readBytes() }
+                            } ?: continue
+                        )
+
+                        val splitsDir = File(pkgDir, "splits")
+                        val splitPaths = if (splitsDir.exists()) {
+                            splitsDir.listFiles()?.filter { it.isFile && it.name.endsWith(".apk") }
+                                ?.map { it.absolutePath } ?: emptyList()
+                        } else {
+                            emptyList()
+                        }
+
+                        val nativeLibDir = File(pkgDir, "lib").absolutePath
+                        val dataDir = File(pkgDir, "data").apply { mkdirs() }.absolutePath
+
+                        val archiveType = when {
+                            File(pkgDir, "obb").exists() -> com.ve.sandbox.core.model.ArchiveType.XAPK
+                            splitPaths.isNotEmpty() -> com.ve.sandbox.core.model.ArchiveType.APKS
+                            else -> com.ve.sandbox.core.model.ArchiveType.APK
+                        }
+
+                        val installed = InstalledPackage(
+                            packageName = manifest.packageName,
+                            archiveType = archiveType,
+                            baseApkPath = baseApk.absolutePath,
+                            splitApkPaths = splitPaths,
+                            nativeLibDir = nativeLibDir,
+                            dataDir = dataDir,
+                            manifest = manifest
+                        )
                         installedPackages[installed.packageName] = installed
-                        Log.i(TAG, "Restored previously installed package: ${installed.packageName}")
+                        try {
+                            load(installed)
+                        } catch (e: Throwable) {
+                            Log.w(TAG, "Could not eagerly load ${installed.packageName}", e)
+                        }
+                        Log.i(TAG, "Restored previously installed package: ${installed.packageName} (splits: ${splitPaths.size})")
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to restore installed package in ${pkgDir.name}", e)
                     }
@@ -152,8 +190,11 @@ class VeEngine private constructor(private val appContext: Context) {
     }
 
     fun launchGuestActivity(context: Context, packageName: String, activityClassName: String? = null) {
-        val loaded = getLoadedPackage(packageName)
-            ?: throw IllegalStateException("Package '$packageName' not loaded into sandbox")
+        val loaded = getLoadedPackage(packageName) ?: run {
+            val installed = installedPackages[packageName]
+                ?: throw IllegalStateException("Package '$packageName' not loaded into sandbox")
+            load(installed)
+        }
         val targetClass = activityClassName ?: loaded.manifest.launcherActivity?.name
             ?: throw IllegalStateException("No launcher Activity found in manifest for '$packageName'")
 
@@ -161,7 +202,20 @@ class VeEngine private constructor(private val appContext: Context) {
             component = android.content.ComponentName(packageName, targetClass)
             flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        context.startActivity(targetIntent)
+
+        // Determine launchMode from guest manifest
+        val comp = loaded.manifest.activities.firstOrNull { it.name == targetClass }
+        val launchMode = android.content.pm.ActivityInfo.LAUNCH_MULTIPLE
+
+        // Pre-masquerade Intent directly to StubActivity so ATMS validation in system_server never fails!
+        val masqueradedIntent = com.ve.sandbox.core.stub.StubManager.masqueradeIntent(
+            targetIntent,
+            context.packageName,
+            launchMode
+        )
+        masqueradedIntent.flags = masqueradedIntent.flags or android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+
+        context.startActivity(masqueradedIntent)
     }
 
     private fun makeWritableRecursively(file: File) {

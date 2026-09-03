@@ -50,14 +50,30 @@ class VeInstrumentation(
         HiddenApiManager.unseal()
     }
 
+    private fun masqueradeIfNeeded(intent: Intent): Intent {
+        val targetPkg = intent.component?.packageName
+        return if (targetPkg != null && targetPkg != hostPackageName) {
+            val engine = try { VeEngine.get() } catch (e: Exception) { null }
+            val loadedPkg = engine?.getLoadedPackage(targetPkg)
+            if (loadedPkg != null) {
+                val targetClass = intent.component?.className
+                val comp = loadedPkg.manifest.activities.firstOrNull { it.name == targetClass }
+                val launchMode = ActivityInfo.LAUNCH_MULTIPLE
+                Log.d(TAG, "Masquerading guest Activity launch: $targetClass -> StubActivity")
+                StubManager.masqueradeIntent(intent, hostPackageName, launchMode)
+            } else {
+                intent
+            }
+        } else {
+            intent
+        }
+    }
+
     // -------------------------------------------------------------
-    // Step 1: Outbound Intent Masquerade (execStartActivity)
+    // Step 1: Outbound Intent Masquerade (execStartActivity Overloads)
     // -------------------------------------------------------------
 
-    /**
-     * Intercepts startActivity from Activity or Context.
-     * Invoked by Android runtime via reflection / hidden API dispatch.
-     */
+    // Overload 1: Context, IBinder, IBinder, Activity, Intent, int, Bundle
     fun execStartActivity(
         who: Context,
         contextThread: IBinder,
@@ -67,24 +83,7 @@ class VeInstrumentation(
         requestCode: Int,
         options: Bundle?
     ): ActivityResult? {
-        val targetPkg = intent.component?.packageName
-        val masqueradedIntent = if (targetPkg != null && targetPkg != hostPackageName) {
-            val engine = try { VeEngine.get() } catch (e: Exception) { null }
-            val loadedPkg = engine?.getLoadedPackage(targetPkg)
-            if (loadedPkg != null) {
-                // Determine launchMode from guest manifest
-                val targetClass = intent.component?.className
-                val comp = loadedPkg.manifest.activities.firstOrNull { it.name == targetClass }
-                val launchMode = ActivityInfo.LAUNCH_MULTIPLE // default
-                Log.d(TAG, "Masquerading guest Activity launch: $targetClass -> StubActivity")
-                StubManager.masqueradeIntent(intent, hostPackageName, launchMode)
-            } else {
-                intent
-            }
-        } else {
-            intent
-        }
-
+        val masqueradedIntent = masqueradeIfNeeded(intent)
         return try {
             val execMethod = Instrumentation::class.java.getDeclaredMethod(
                 "execStartActivity",
@@ -108,7 +107,46 @@ class VeInstrumentation(
                 options
             ) as? ActivityResult
         } catch (t: Throwable) {
-            Log.e(TAG, "Failed to invoke baseInstrumentation.execStartActivity", t)
+            Log.e(TAG, "Failed to invoke baseInstrumentation.execStartActivity (Activity target)", t)
+            null
+        }
+    }
+
+    // Overload 2: Context, IBinder, IBinder, String, Intent, int, Bundle (non-Activity context)
+    fun execStartActivity(
+        who: Context,
+        contextThread: IBinder,
+        token: IBinder?,
+        resultWho: String?,
+        intent: Intent,
+        requestCode: Int,
+        options: Bundle?
+    ): ActivityResult? {
+        val masqueradedIntent = masqueradeIfNeeded(intent)
+        return try {
+            val execMethod = Instrumentation::class.java.getDeclaredMethod(
+                "execStartActivity",
+                Context::class.java,
+                IBinder::class.java,
+                IBinder::class.java,
+                String::class.java,
+                Intent::class.java,
+                Int::class.javaPrimitiveType,
+                Bundle::class.java
+            ).apply { isAccessible = true }
+
+            execMethod.invoke(
+                baseInstrumentation,
+                who,
+                contextThread,
+                token,
+                resultWho,
+                masqueradedIntent,
+                requestCode,
+                options
+            ) as? ActivityResult
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to invoke baseInstrumentation.execStartActivity (String resultWho)", t)
             null
         }
     }
@@ -136,7 +174,6 @@ class VeInstrumentation(
                         val guestActivityClass = loadedPkg.classLoader.loadClass(realClass)
                         val activity = guestActivityClass.getDeclaredConstructor().newInstance() as Activity
 
-                        // Restore original component on the intent
                         if (realIntent != null) {
                             intent.component = realIntent.component
                         }
@@ -157,7 +194,12 @@ class VeInstrumentation(
 
     override fun callActivityOnCreate(activity: Activity, icicle: Bundle?) {
         injectGuestContextAndResources(activity)
-        baseInstrumentation.callActivityOnCreate(activity, icicle)
+        try {
+            baseInstrumentation.callActivityOnCreate(activity, icicle)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Exception during guest Activity onCreate(): ${activity.javaClass.name}", t)
+            throw t
+        }
     }
 
     override fun callActivityOnCreate(
@@ -166,7 +208,12 @@ class VeInstrumentation(
         persistentState: PersistableBundle?
     ) {
         injectGuestContextAndResources(activity)
-        baseInstrumentation.callActivityOnCreate(activity, icicle, persistentState)
+        try {
+            baseInstrumentation.callActivityOnCreate(activity, icicle, persistentState)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Exception during guest Activity onCreate(PersistableBundle): ${activity.javaClass.name}", t)
+            throw t
+        }
     }
 
     private fun injectGuestContextAndResources(activity: Activity) {
@@ -174,12 +221,19 @@ class VeInstrumentation(
         val className = activityClass.name
         val engine = try { VeEngine.get() } catch (e: Exception) { null } ?: return
 
-        // Check if this Activity belongs to any loaded guest package
-        val loadedPkg = engine.getInstalledPackages().firstNotNullOfOrNull {
-            engine.getLoadedPackage(it.packageName)
-        }?.takeIf { pkg ->
-            pkg.manifest.activities.any { it.name == className } ||
-                    activityClass.classLoader == pkg.classLoader
+        // Extract target package from intent or search all loaded packages
+        val targetPkgFromIntent = StubManager.extractTargetPackage(activity.intent)
+            ?: activity.intent?.component?.packageName
+
+        val loadedPkg = if (targetPkgFromIntent != null && targetPkgFromIntent != hostPackageName) {
+            engine.getLoadedPackage(targetPkgFromIntent)
+        } else {
+            engine.getInstalledPackages().mapNotNull {
+                engine.getLoadedPackage(it.packageName)
+            }.firstOrNull { pkg ->
+                pkg.manifest.activities.any { it.name == className } ||
+                        activityClass.classLoader == pkg.classLoader
+            }
         } ?: return
 
         Log.i(TAG, "Injecting ProxyContext & Resources into guest Activity: $className")
@@ -210,6 +264,22 @@ class VeInstrumentation(
                 field.isAccessible = true
                 field.set(activity, guestApp)
                 Log.d(TAG, "Successfully bound guest Application to $className")
+            }
+
+            // 4. Apply guest Activity theme if declared
+            try {
+                val comp = loadedPkg.manifest.activities.firstOrNull { it.name == className }
+                val themeResName = comp?.theme ?: loadedPkg.manifest.applicationTheme
+                if (themeResName != null) {
+                    val cleanName = themeResName.substringAfterLast('/')
+                    val themeId = loadedPkg.resources.getIdentifier(cleanName, "style", loadedPkg.packageName)
+                    if (themeId != 0) {
+                        activity.setTheme(themeId)
+                        Log.d(TAG, "Applied guest theme: $themeResName (id=$themeId) to $className")
+                    }
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "Could not apply guest theme to $className: ${e.message}")
             }
         } catch (t: Throwable) {
             Log.e(TAG, "Error injecting guest context into Activity: $className", t)

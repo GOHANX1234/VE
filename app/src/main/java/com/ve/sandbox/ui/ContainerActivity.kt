@@ -61,11 +61,19 @@ class ContainerActivity : Activity() {
             return
         }
 
-        val engine = try { VeEngine.get() } catch (e: Exception) { null }
-        val loaded = engine?.getLoadedPackage(targetPkg) ?: run {
-            Log.e(TAG, "Cannot host UI: Package '$targetPkg' is not loaded in sandbox")
+        val engine = try { VeEngine.get() } catch (e: Exception) { null } ?: run {
             finish()
             return
+        }
+        val loaded = engine.getLoadedPackage(targetPkg) ?: run {
+            val installed = engine.getInstalledPackages().firstOrNull { it.packageName == targetPkg }
+            if (installed != null) {
+                engine.load(installed)
+            } else {
+                Log.e(TAG, "Cannot host UI: Package '$targetPkg' is not loaded in sandbox")
+                finish()
+                return
+            }
         }
 
         loadedPackage = loaded
