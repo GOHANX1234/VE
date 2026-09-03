@@ -71,25 +71,7 @@ class ProxyContext(
 
     override fun getApplicationInfo(): ApplicationInfo {
         cachedApplicationInfo?.let { return it }
-
-        val info = ApplicationInfo().apply {
-            packageName = loadedPackage.packageName
-            name = loadedPackage.manifest.applicationClassName
-            className = loadedPackage.manifest.applicationClassName
-            sourceDir = loadedPackage.installedPackage.baseApkPath
-            publicSourceDir = loadedPackage.installedPackage.baseApkPath
-            if (loadedPackage.installedPackage.splitApkPaths.isNotEmpty()) {
-                splitSourceDirs = loadedPackage.installedPackage.splitApkPaths.toTypedArray()
-                splitPublicSourceDirs = loadedPackage.installedPackage.splitApkPaths.toTypedArray()
-            }
-            dataDir = rootDataDir.absolutePath
-            nativeLibraryDir = loadedPackage.installedPackage.nativeLibDir
-            targetSdkVersion = loadedPackage.manifest.targetSdkVersion
-            minSdkVersion = loadedPackage.manifest.minSdkVersion
-            uid = Process.myUid()
-            flags = ApplicationInfo.FLAG_HAS_CODE or ApplicationInfo.FLAG_ALLOW_BACKUP
-        }
-
+        val info = com.ve.sandbox.core.hook.PackageInfoSynthesizer.buildApplicationInfo(loadedPackage)
         cachedApplicationInfo = info
         return info
     }
@@ -161,7 +143,7 @@ class ProxyContext(
     override fun openFileInput(name: String): FileInputStream = FileInputStream(getFileStreamPath(name))
 
     override fun openFileOutput(name: String, mode: Int): FileOutputStream {
-        val file = getFileStreamPath(name)
+        val file = getFileStreamPath(name).apply { parentFile?.mkdirs() }
         val append = (mode and Context.MODE_APPEND) != 0
         return FileOutputStream(file, append)
     }
@@ -169,8 +151,9 @@ class ProxyContext(
     override fun deleteFile(name: String): Boolean = getFileStreamPath(name).delete()
 
     override fun getExternalFilesDir(type: String?): File? {
-        val baseExt = super.getExternalFilesDir(null) ?: return null
-        val guestExt = File(baseExt, "ve_sandbox/${loadedPackage.packageName}/files/${type ?: ""}")
+        val baseExt = super.getExternalFilesDir(null) ?: File(filesDir, "external_files")
+        val filesDir = File(baseExt, "ve_sandbox/${loadedPackage.packageName}/files")
+        val guestExt = if (type.isNullOrEmpty()) filesDir else File(filesDir, type)
         guestExt.mkdirs()
         return guestExt
     }
@@ -181,7 +164,7 @@ class ProxyContext(
     }
 
     override fun getExternalCacheDir(): File? {
-        val baseExt = super.getExternalCacheDir() ?: return null
+        val baseExt = super.getExternalCacheDir() ?: File(cacheDir, "external_cache")
         val guestExt = File(baseExt, "ve_sandbox/${loadedPackage.packageName}/cache")
         guestExt.mkdirs()
         return guestExt
@@ -190,6 +173,102 @@ class ProxyContext(
     override fun getExternalCacheDirs(): Array<File> {
         val dir = getExternalCacheDir()
         return if (dir != null) arrayOf(dir) else emptyArray()
+    }
+
+    override fun getObbDir(): File? {
+        val baseObb = super.getObbDir() ?: super.getExternalFilesDir("obb") ?: File(filesDir, "obb")
+        val guestObb = File(baseObb, "ve_sandbox/${loadedPackage.packageName}/obb")
+        guestObb.mkdirs()
+        return guestObb
+    }
+
+    override fun getObbDirs(): Array<File> {
+        val dir = getObbDir()
+        return if (dir != null) arrayOf(dir) else emptyArray()
+    }
+
+    override fun getExternalMediaDirs(): Array<File> {
+        val baseMedia = try { super.getExternalMediaDirs().firstOrNull() } catch (e: Throwable) { null }
+            ?: super.getExternalFilesDir("media") ?: File(filesDir, "media")
+        val guestMedia = File(baseMedia, "ve_sandbox/${loadedPackage.packageName}/media").apply { mkdirs() }
+        return arrayOf(guestMedia)
+    }
+
+    // -------------------------------------------------------------
+    // Virtual Service & Broadcast Interception
+    // -------------------------------------------------------------
+
+    override fun startService(service: android.content.Intent?): android.content.ComponentName? {
+        if (service != null) {
+            val comp = service.component
+            if (comp != null && comp.packageName == loadedPackage.packageName) {
+                Log.d(TAG, "Virtual startService intercepted: ${comp.className}")
+                return comp
+            }
+        }
+        return try {
+            super.startService(service)
+        } catch (t: Throwable) {
+            Log.w(TAG, "startService fallback intercepted exception: ${t.message}")
+            service?.component
+        }
+    }
+
+    override fun startForegroundService(service: android.content.Intent?): android.content.ComponentName? {
+        return startService(service)
+    }
+
+    override fun stopService(name: android.content.Intent?): Boolean {
+        if (name != null) {
+            val comp = name.component
+            if (comp != null && comp.packageName == loadedPackage.packageName) {
+                Log.d(TAG, "Virtual stopService intercepted: ${comp.className}")
+                return true
+            }
+        }
+        return try {
+            super.stopService(name)
+        } catch (t: Throwable) {
+            true
+        }
+    }
+
+    override fun bindService(
+        service: android.content.Intent,
+        conn: android.content.ServiceConnection,
+        flags: Int
+    ): Boolean {
+        val comp = service.component
+        if (comp != null && comp.packageName == loadedPackage.packageName) {
+            Log.d(TAG, "Virtual bindService intercepted: ${comp.className}")
+            return true
+        }
+        return try {
+            super.bindService(service, conn, flags)
+        } catch (t: Throwable) {
+            Log.w(TAG, "bindService fallback intercepted exception: ${t.message}")
+            false
+        }
+    }
+
+    override fun sendBroadcast(intent: android.content.Intent?) {
+        try {
+            super.sendBroadcast(intent)
+        } catch (t: Throwable) {
+            Log.w(TAG, "sendBroadcast intercepted exception: ${t.message}")
+        }
+    }
+
+    override fun registerReceiver(
+        receiver: android.content.BroadcastReceiver?,
+        filter: android.content.IntentFilter?
+    ): android.content.Intent? {
+        return try {
+            super.registerReceiver(receiver, filter)
+        } catch (t: Throwable) {
+            Log.w(TAG, "registerReceiver intercepted exception: ${t.message}")
+            null
+        }
     }
 
     // -------------------------------------------------------------

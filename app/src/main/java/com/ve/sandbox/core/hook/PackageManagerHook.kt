@@ -87,8 +87,8 @@ object PackageManagerHook {
             println("[IPackageManager Hook] Invoking $methodName with args: ${safeArgs.map { it?.toString() }}")
 
             try {
-                when (methodName) {
-                    "getPackageInfo" -> {
+                when {
+                    methodName == "getPackageInfo" -> {
                         val pkgName = safeArgs.getOrNull(0) as? String
                         val flags = (safeArgs.getOrNull(1) as? Number)?.toInt() ?: 0
                         if (pkgName != null) {
@@ -101,7 +101,27 @@ object PackageManagerHook {
                         }
                     }
 
-                    "getApplicationInfo" -> {
+                    methodName == "getPackageInfoVersioned" || methodName.startsWith("getPackageInfoVersioned") -> {
+                        val versionedPkg = safeArgs.getOrNull(0)
+                        val pkgName = if (versionedPkg is String) versionedPkg else {
+                            try {
+                                versionedPkg?.javaClass?.getMethod("getPackageName")?.invoke(versionedPkg) as? String
+                            } catch (e: Exception) {
+                                versionedPkg?.toString()
+                            }
+                        }
+                        val flags = (safeArgs.getOrNull(1) as? Number)?.toInt() ?: 0
+                        if (pkgName != null) {
+                            val engine = try { VeEngine.get() } catch (e: Exception) { null }
+                            val loaded = engine?.getLoadedPackage(pkgName)
+                            if (loaded != null) {
+                                Log.d(TAG, "Intercepted getPackageInfoVersioned for virtual package: $pkgName")
+                                return PackageInfoSynthesizer.buildPackageInfo(loaded, flags)
+                            }
+                        }
+                    }
+
+                    methodName == "getApplicationInfo" -> {
                         val pkgName = safeArgs.getOrNull(0) as? String
                         val flags = (safeArgs.getOrNull(1) as? Number)?.toInt() ?: 0
                         if (pkgName != null) {
@@ -114,7 +134,7 @@ object PackageManagerHook {
                         }
                     }
 
-                    "getActivityInfo" -> {
+                    methodName == "getActivityInfo" -> {
                         val comp = safeArgs.getOrNull(0) as? ComponentName
                         val flags = (safeArgs.getOrNull(1) as? Number)?.toInt() ?: 0
                         if (comp != null) {
@@ -130,21 +150,118 @@ object PackageManagerHook {
                         }
                     }
 
-                    "checkPermission" -> {
-                        val perm = safeArgs.getOrNull(0) as? String
-                        val pkgName = safeArgs.getOrNull(1) as? String
-                        if (perm != null && pkgName != null) {
+                    methodName == "getServiceInfo" -> {
+                        val comp = safeArgs.getOrNull(0) as? ComponentName
+                        val flags = (safeArgs.getOrNull(1) as? Number)?.toInt() ?: 0
+                        if (comp != null) {
                             val engine = try { VeEngine.get() } catch (e: Exception) { null }
-                            val loaded = engine?.getLoadedPackage(pkgName)
+                            val loaded = engine?.getLoadedPackage(comp.packageName)
                             if (loaded != null) {
-                                val granted = loaded.manifest.permissions.contains(perm)
-                                Log.d(TAG, "Intercepted checkPermission for $pkgName ($perm): granted=$granted")
-                                return if (granted) PackageManager.PERMISSION_GRANTED else PackageManager.PERMISSION_DENIED
+                                val parsedComp = loaded.manifest.services.firstOrNull { it.name == comp.className }
+                                if (parsedComp != null) {
+                                    Log.d(TAG, "Intercepted getServiceInfo for virtual service: ${comp.className}")
+                                    return PackageInfoSynthesizer.buildServiceInfo(loaded, parsedComp)
+                                }
                             }
                         }
                     }
 
-                    "resolveIntent" -> {
+                    methodName == "getReceiverInfo" -> {
+                        val comp = safeArgs.getOrNull(0) as? ComponentName
+                        val flags = (safeArgs.getOrNull(1) as? Number)?.toInt() ?: 0
+                        if (comp != null) {
+                            val engine = try { VeEngine.get() } catch (e: Exception) { null }
+                            val loaded = engine?.getLoadedPackage(comp.packageName)
+                            if (loaded != null) {
+                                val parsedComp = loaded.manifest.receivers.firstOrNull { it.name == comp.className }
+                                if (parsedComp != null) {
+                                    Log.d(TAG, "Intercepted getReceiverInfo for virtual receiver: ${comp.className}")
+                                    return PackageInfoSynthesizer.buildActivityInfo(loaded, parsedComp)
+                                }
+                            }
+                        }
+                    }
+
+                    methodName == "getProviderInfo" -> {
+                        val comp = safeArgs.getOrNull(0) as? ComponentName
+                        val flags = (safeArgs.getOrNull(1) as? Number)?.toInt() ?: 0
+                        if (comp != null) {
+                            val engine = try { VeEngine.get() } catch (e: Exception) { null }
+                            val loaded = engine?.getLoadedPackage(comp.packageName)
+                            if (loaded != null) {
+                                val parsedComp = loaded.manifest.providers.firstOrNull { it.name == comp.className }
+                                if (parsedComp != null) {
+                                    Log.d(TAG, "Intercepted getProviderInfo for virtual provider: ${comp.className}")
+                                    return PackageInfoSynthesizer.buildProviderInfo(loaded, parsedComp)
+                                }
+                            }
+                        }
+                    }
+
+                    methodName.startsWith("resolveContentProvider") -> {
+                        val authority = safeArgs.getOrNull(0) as? String
+                        val flags = (safeArgs.getOrNull(1) as? Number)?.toInt() ?: 0
+                        if (authority != null) {
+                            val engine = try { VeEngine.get() } catch (e: Exception) { null }
+                            if (engine != null) {
+                                for (pkg in engine.getInstalledPackages()) {
+                                    val loaded = engine.getLoadedPackage(pkg.packageName)
+                                    val comp = loaded?.manifest?.providers?.firstOrNull {
+                                        it.authorities == authority || it.authorities?.split(";")?.contains(authority) == true
+                                    } ?: pkg.manifest.providers.firstOrNull {
+                                        it.authorities == authority || it.authorities?.split(";")?.contains(authority) == true
+                                    }
+                                    if (comp != null && loaded != null) {
+                                        Log.d(TAG, "Intercepted resolveContentProvider for virtual authority: $authority -> ${comp.name}")
+                                        return PackageInfoSynthesizer.buildProviderInfo(loaded, comp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    methodName == "checkPermission" || methodName == "checkUidPermission" -> {
+                        val perm = safeArgs.getOrNull(0) as? String
+                        val pkgNameOrUid = safeArgs.getOrNull(1)
+                        if (perm != null) {
+                            val engine = try { VeEngine.get() } catch (e: Exception) { null }
+                            val pkgName = when (pkgNameOrUid) {
+                                is String -> pkgNameOrUid
+                                is Number -> if (pkgNameOrUid.toInt() == android.os.Process.myUid()) {
+                                    engine?.getInstalledPackages()?.firstOrNull()?.packageName
+                                } else null
+                                else -> null
+                            }
+                            if (pkgName != null) {
+                                val loaded = engine?.getLoadedPackage(pkgName)
+                                if (loaded != null) {
+                                    val granted = loaded.manifest.permissions.contains(perm)
+                                    Log.d(TAG, "Intercepted checkPermission for $pkgName ($perm): granted=$granted")
+                                    return if (granted) PackageManager.PERMISSION_GRANTED else PackageManager.PERMISSION_DENIED
+                                }
+                            }
+                        }
+                    }
+
+                    methodName == "checkSignatures" -> {
+                        val pkg1 = safeArgs.getOrNull(0) as? String
+                        val pkg2 = safeArgs.getOrNull(1) as? String
+                        if (pkg1 != null && pkg1 == pkg2) {
+                            return PackageManager.SIGNATURE_MATCH
+                        }
+                    }
+
+                    methodName.startsWith("getPackageUid") -> {
+                        val pkgName = safeArgs.getOrNull(0) as? String
+                        if (pkgName != null) {
+                            val engine = try { VeEngine.get() } catch (e: Exception) { null }
+                            if (engine?.getLoadedPackage(pkgName) != null) {
+                                return android.os.Process.myUid()
+                            }
+                        }
+                    }
+
+                    methodName == "resolveIntent" -> {
                         val intent = safeArgs.getOrNull(0) as? Intent
                         if (intent != null) {
                             val targetPkg = intent.component?.packageName
@@ -164,7 +281,7 @@ object PackageManagerHook {
                         }
                     }
 
-                    "getInstallerPackageName" -> {
+                    methodName == "getInstallerPackageName" -> {
                         val pkgName = safeArgs.getOrNull(0) as? String
                         if (pkgName != null) {
                             val engine = try { VeEngine.get() } catch (e: Exception) { null }

@@ -98,9 +98,9 @@ class ActivityManagerHookTest {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
 
-        // Find a startActivity method on the interface
+        // Find a startActivity method on the interface that takes an Intent
         val iAmClass = Class.forName("android.app.IActivityManager")
-        val startActivityMethod = iAmClass.methods.firstOrNull { it.name.startsWith("startActivity") }
+        val startActivityMethod = iAmClass.methods.firstOrNull { it.name.startsWith("startActivity") && it.parameterTypes.contains(Intent::class.java) }
 
         if (startActivityMethod != null) {
             // Find which argument position is Intent

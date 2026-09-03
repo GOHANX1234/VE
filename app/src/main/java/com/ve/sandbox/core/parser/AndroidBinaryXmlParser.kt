@@ -38,6 +38,7 @@ class AndroidBinaryXmlParser {
         private const val ATTR_NAME = 0x01010003
         private const val ATTR_EXPORTED = 0x01010010
         private const val ATTR_PROCESS = 0x01010011
+        private const val ATTR_AUTHORITIES = 0x01010018
         private const val ATTR_LAUNCH_MODE = 0x0101001d
         private const val ATTR_SCREEN_ORIENTATION = 0x0101001e
         private const val ATTR_CONFIG_CHANGES = 0x0101001f
@@ -298,11 +299,13 @@ class AndroidBinaryXmlParser {
                             val compName = resolveClassName(packageName, rawName)
                             val exported = getAttrBool("exported", ATTR_EXPORTED, false)
                             val process = getAttr("process", ATTR_PROCESS)
+                            val authorities = getAttr("authorities", ATTR_AUTHORITIES)
 
                             currentComponent = ParsedComponent(
                                 name = compName,
                                 exported = exported,
-                                processName = process
+                                processName = process,
+                                authorities = authorities
                             )
                             currentIntentFilters = mutableListOf()
                         }

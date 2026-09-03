@@ -21,6 +21,7 @@ data class ParsedComponent(
     val name: String,
     val exported: Boolean = false,
     val processName: String? = null,
+    val authorities: String? = null,
     val theme: String? = null,
     val screenOrientation: Int? = null,
     val launchMode: Int = 0,

@@ -84,6 +84,9 @@ class GuestApplicationManager(
 
         applicationMap[loadedPackage.packageName] = guestApp
 
+        // Install guest ContentProviders before Application.onCreate() (standard Android lifecycle)
+        installGuestContentProviders(loadedPackage, proxyContext)
+
         // Invoke guest Application onCreate()
         try {
             guestApp.onCreate()
@@ -97,4 +100,23 @@ class GuestApplicationManager(
     }
 
     fun getGuestApplication(packageName: String): Application? = applicationMap[packageName]
+
+    private fun installGuestContentProviders(loadedPackage: LoadedPackage, proxyContext: ProxyContext) {
+        for (comp in loadedPackage.manifest.providers) {
+            try {
+                val providerClass = try {
+                    loadedPackage.classLoader.loadClass(comp.name)
+                } catch (cnf: ClassNotFoundException) {
+                    Log.w(TAG, "ContentProvider class not found in guest APK: ${comp.name}")
+                    continue
+                }
+                val providerInstance = providerClass.getDeclaredConstructor().newInstance() as? android.content.ContentProvider ?: continue
+                val providerInfo = com.ve.sandbox.core.hook.PackageInfoSynthesizer.buildProviderInfo(loadedPackage, comp)
+                providerInstance.attachInfo(proxyContext, providerInfo)
+                Log.i(TAG, "Installed guest ContentProvider: ${comp.name} (authorities=${comp.authorities})")
+            } catch (t: Throwable) {
+                Log.w(TAG, "Failed to initialize guest ContentProvider: ${comp.name}", t)
+            }
+        }
+    }
 }

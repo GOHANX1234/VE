@@ -15,8 +15,37 @@ import java.io.File
  */
 object PackageInfoSynthesizer {
 
+    fun getPrimaryAbiDir(baseNativeLibDir: String): String {
+        val dir = File(baseNativeLibDir)
+        if (!dir.exists()) return baseNativeLibDir
+        val supportedAbis = Build.SUPPORTED_ABIS ?: emptyArray()
+        for (abi in supportedAbis) {
+            val abiDir = File(dir, abi)
+            if (abiDir.exists() && abiDir.isDirectory) {
+                return abiDir.absolutePath
+            }
+        }
+        val firstSub = dir.listFiles()?.firstOrNull { it.isDirectory }
+        if (firstSub != null) return firstSub.absolutePath
+        return baseNativeLibDir
+    }
+
+    fun extractSplitNames(splitApkPaths: List<String>): Array<String>? {
+        if (splitApkPaths.isEmpty()) return null
+        return splitApkPaths.map { path ->
+            val fileName = File(path).name
+            if (fileName.endsWith(".apk", ignoreCase = true)) {
+                fileName.substring(0, fileName.length - 4)
+            } else {
+                fileName
+            }
+        }.toTypedArray()
+    }
+
     fun buildApplicationInfo(loaded: LoadedPackage, flags: Int = 0): ApplicationInfo {
         val manifest = loaded.manifest
+        val primaryAbiDir = getPrimaryAbiDir(loaded.installedPackage.nativeLibDir)
+        val splitNamesArray = extractSplitNames(loaded.installedPackage.splitApkPaths)
         return ApplicationInfo().apply {
             packageName = loaded.packageName
             name = manifest.applicationClassName
@@ -26,9 +55,10 @@ object PackageInfoSynthesizer {
             if (loaded.installedPackage.splitApkPaths.isNotEmpty()) {
                 splitSourceDirs = loaded.installedPackage.splitApkPaths.toTypedArray()
                 splitPublicSourceDirs = loaded.installedPackage.splitApkPaths.toTypedArray()
+                splitNames = splitNamesArray
             }
             dataDir = loaded.installedPackage.dataDir
-            nativeLibraryDir = loaded.installedPackage.nativeLibDir
+            nativeLibraryDir = primaryAbiDir
             targetSdkVersion = manifest.targetSdkVersion
             minSdkVersion = manifest.minSdkVersion
             uid = Process.myUid()
@@ -43,6 +73,7 @@ object PackageInfoSynthesizer {
         return PackageInfo().apply {
             packageName = loaded.packageName
             versionName = manifest.versionName
+            splitNames = appInfo.splitNames
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 longVersionCode = manifest.versionCode
             }
@@ -117,6 +148,7 @@ object PackageInfoSynthesizer {
             packageName = loaded.packageName
             applicationInfo = appInfo
             exported = comp.exported
+            authority = comp.authorities
             processName = comp.processName ?: loaded.packageName
         }
     }

@@ -159,12 +159,98 @@ object ActivityManagerHook {
                             if (loaded != null) {
                                 val targetClass = originalIntent.component?.className
                                 val comp = loaded.manifest.activities.firstOrNull { it.name == targetClass }
-                                val launchMode = ActivityInfo.LAUNCH_MULTIPLE
+                                val launchMode = comp?.launchMode ?: ActivityInfo.LAUNCH_MULTIPLE
+                                val screenOrientation = comp?.screenOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
 
                                 Log.d(TAG, "Binder Hook: Masquerading $targetClass in $methodName")
-                                val stubIntent = StubManager.masqueradeIntent(originalIntent, hostPackageName, launchMode)
+                                val stubIntent = StubManager.masqueradeIntent(originalIntent, hostPackageName, launchMode, screenOrientation)
                                 lastMasqueradedIntent = stubIntent
                                 safeArgs[intentIndex] = stubIntent
+                            }
+                        }
+                    }
+                } else if (methodName.startsWith("getIntentSender")) {
+                    // Masquerade PendingIntent targets and ensure calling package is host package
+                    for (i in safeArgs.indices) {
+                        val arg = safeArgs[i]
+                        if (arg is Array<*>) {
+                            @Suppress("UNCHECKED_CAST")
+                            val intentArray = arg as? Array<Intent?>
+                            if (intentArray != null) {
+                                val newArray = intentArray.map { itemIntent ->
+                                    if (itemIntent != null && itemIntent.component?.packageName != null && itemIntent.component?.packageName != hostPackageName) {
+                                        val targetPkg = itemIntent.component!!.packageName
+                                        val engine = try { VeEngine.get() } catch (e: Exception) { null }
+                                        val loaded = engine?.getLoadedPackage(targetPkg)
+                                        if (loaded != null) {
+                                            val comp = loaded.manifest.activities.firstOrNull { it.name == itemIntent.component?.className }
+                                            val launchMode = comp?.launchMode ?: ActivityInfo.LAUNCH_MULTIPLE
+                                            val screenOrientation = comp?.screenOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                                            val stub = StubManager.masqueradeIntent(itemIntent, hostPackageName, launchMode, screenOrientation)
+                                            lastMasqueradedIntent = stub
+                                            stub
+                                        } else itemIntent
+                                    } else itemIntent
+                                }.toTypedArray()
+                                safeArgs[i] = newArray
+                            }
+                        } else if (arg is Intent) {
+                            val targetPkg = arg.component?.packageName
+                            if (targetPkg != null && targetPkg != hostPackageName) {
+                                val engine = try { VeEngine.get() } catch (e: Exception) { null }
+                                val loaded = engine?.getLoadedPackage(targetPkg)
+                                if (loaded != null) {
+                                    val comp = loaded.manifest.activities.firstOrNull { it.name == arg.component?.className }
+                                    val launchMode = comp?.launchMode ?: ActivityInfo.LAUNCH_MULTIPLE
+                                    val screenOrientation = comp?.screenOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                                    val stub = StubManager.masqueradeIntent(arg, hostPackageName, launchMode, screenOrientation)
+                                    lastMasqueradedIntent = stub
+                                    safeArgs[i] = stub
+                                }
+                            }
+                        } else if (arg is String && arg != hostPackageName) {
+                            val engine = try { VeEngine.get() } catch (e: Exception) { null }
+                            if (engine?.getLoadedPackage(arg) != null) {
+                                safeArgs[i] = hostPackageName
+                            }
+                        }
+                    }
+                } else if (methodName.startsWith("startService") || methodName.startsWith("startForegroundService")) {
+                    for (arg in safeArgs) {
+                        if (arg is Intent) {
+                            val targetPkg = arg.component?.packageName
+                            if (targetPkg != null && targetPkg != hostPackageName) {
+                                val engine = try { VeEngine.get() } catch (e: Exception) { null }
+                                if (engine?.getLoadedPackage(targetPkg) != null) {
+                                    Log.d(TAG, "Binder Hook: Intercepted $methodName for virtual package: $targetPkg (${arg.component?.className})")
+                                    return arg.component
+                                }
+                            }
+                        }
+                    }
+                } else if (methodName.startsWith("bindService") || methodName.startsWith("bindIsolatedService")) {
+                    for (arg in safeArgs) {
+                        if (arg is Intent) {
+                            val targetPkg = arg.component?.packageName
+                            if (targetPkg != null && targetPkg != hostPackageName) {
+                                val engine = try { VeEngine.get() } catch (e: Exception) { null }
+                                if (engine?.getLoadedPackage(targetPkg) != null) {
+                                    Log.d(TAG, "Binder Hook: Intercepted $methodName for virtual package: $targetPkg (${arg.component?.className})")
+                                    return 1
+                                }
+                            }
+                        }
+                    }
+                } else if (methodName.startsWith("stopService")) {
+                    for (arg in safeArgs) {
+                        if (arg is Intent) {
+                            val targetPkg = arg.component?.packageName
+                            if (targetPkg != null && targetPkg != hostPackageName) {
+                                val engine = try { VeEngine.get() } catch (e: Exception) { null }
+                                if (engine?.getLoadedPackage(targetPkg) != null) {
+                                    Log.d(TAG, "Binder Hook: Intercepted $methodName for virtual package: $targetPkg")
+                                    return 1
+                                }
                             }
                         }
                     }
