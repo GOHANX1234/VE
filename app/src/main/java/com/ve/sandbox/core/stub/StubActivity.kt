@@ -16,3 +16,10 @@ open class StubActivity : Activity() {
 class StubSingleTopActivity : StubActivity()
 class StubSingleTaskActivity : StubActivity()
 class StubSingleInstanceActivity : StubActivity()
+
+// Dedicated landscape stubs for horizontal games and apps
+class StubLandscapeActivity : StubActivity()
+class StubLandscapeSingleTopActivity : StubActivity()
+class StubLandscapeSingleTaskActivity : StubActivity()
+class StubLandscapeSingleInstanceActivity : StubActivity()
+

@@ -51,6 +51,38 @@
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
             android:hardwareAccelerated="true" />
 
+        <!-- Landscape Stub Activities for Horizontal Games and Apps -->
+        <activity
+            android:name=".core.stub.StubLandscapeActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
+            android:hardwareAccelerated="true" />
+
+        <activity
+            android:name=".core.stub.StubLandscapeSingleTopActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
+            android:hardwareAccelerated="true" />
+
+        <activity
+            android:name=".core.stub.StubLandscapeSingleTaskActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
+            android:hardwareAccelerated="true" />
+
+        <activity
+            android:name=".core.stub.StubLandscapeSingleInstanceActivity"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
+            android:hardwareAccelerated="true" />
+
         <!-- Container Activity for Embedded UI Hosting in Phase 5 -->
         <activity
             android:name=".ui.ContainerActivity"

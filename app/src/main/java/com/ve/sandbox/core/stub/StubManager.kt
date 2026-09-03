@@ -27,16 +27,32 @@ object StubManager {
     val STUB_SINGLE_TASK = StubSingleTaskActivity::class.java.name
     val STUB_SINGLE_INSTANCE = StubSingleInstanceActivity::class.java.name
 
+    val STUB_LANDSCAPE = StubLandscapeActivity::class.java.name
+    val STUB_LANDSCAPE_SINGLE_TOP = StubLandscapeSingleTopActivity::class.java.name
+    val STUB_LANDSCAPE_SINGLE_TASK = StubLandscapeSingleTaskActivity::class.java.name
+    val STUB_LANDSCAPE_SINGLE_INSTANCE = StubLandscapeSingleInstanceActivity::class.java.name
+
     private val allStubClasses = setOf(
         STUB_STANDARD,
         STUB_SINGLE_TOP,
         STUB_SINGLE_TASK,
-        STUB_SINGLE_INSTANCE
+        STUB_SINGLE_INSTANCE,
+        STUB_LANDSCAPE,
+        STUB_LANDSCAPE_SINGLE_TOP,
+        STUB_LANDSCAPE_SINGLE_TASK,
+        STUB_LANDSCAPE_SINGLE_INSTANCE
     )
 
     fun isStubComponent(className: String?): Boolean {
         if (className == null) return false
         return allStubClasses.contains(className)
+    }
+
+    fun isLandscapeOrientation(orientation: Int): Boolean {
+        return orientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE ||
+                orientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE ||
+                orientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE ||
+                orientation == ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
     }
 
     fun isStubIntent(intent: Intent?): Boolean {
@@ -48,21 +64,33 @@ object StubManager {
 
     /**
      * Replaces the real Intent targeting a guest Activity with an Intent targeting
-     * one of our host-declared Stub Activities matching the requested launchMode.
+     * one of our host-declared Stub Activities matching the requested launchMode and screenOrientation.
      */
     fun masqueradeIntent(
         realIntent: Intent,
         hostPackageName: String,
-        launchMode: Int = ActivityInfo.LAUNCH_MULTIPLE
+        launchMode: Int = ActivityInfo.LAUNCH_MULTIPLE,
+        screenOrientation: Int = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     ): Intent {
         val targetComponent = realIntent.component
             ?: throw IllegalArgumentException("Explicit Intent with ComponentName required for Activity masquerade")
 
-        val stubClass = when (launchMode) {
-            ActivityInfo.LAUNCH_SINGLE_TOP -> STUB_SINGLE_TOP
-            ActivityInfo.LAUNCH_SINGLE_TASK -> STUB_SINGLE_TASK
-            ActivityInfo.LAUNCH_SINGLE_INSTANCE -> STUB_SINGLE_INSTANCE
-            else -> STUB_STANDARD
+        val isLandscape = isLandscapeOrientation(screenOrientation)
+
+        val stubClass = if (isLandscape) {
+            when (launchMode) {
+                ActivityInfo.LAUNCH_SINGLE_TOP -> STUB_LANDSCAPE_SINGLE_TOP
+                ActivityInfo.LAUNCH_SINGLE_TASK -> STUB_LANDSCAPE_SINGLE_TASK
+                ActivityInfo.LAUNCH_SINGLE_INSTANCE -> STUB_LANDSCAPE_SINGLE_INSTANCE
+                else -> STUB_LANDSCAPE
+            }
+        } else {
+            when (launchMode) {
+                ActivityInfo.LAUNCH_SINGLE_TOP -> STUB_SINGLE_TOP
+                ActivityInfo.LAUNCH_SINGLE_TASK -> STUB_SINGLE_TASK
+                ActivityInfo.LAUNCH_SINGLE_INSTANCE -> STUB_SINGLE_INSTANCE
+                else -> STUB_STANDARD
+            }
         }
 
         val stubIntent = Intent().apply {

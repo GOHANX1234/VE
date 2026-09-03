@@ -86,8 +86,10 @@ object PackageInfoSynthesizer {
             applicationInfo = appInfo
             exported = comp.exported
             processName = comp.processName ?: loaded.packageName
-            launchMode = ActivityInfo.LAUNCH_MULTIPLE
+            launchMode = comp.launchMode
+            configChanges = comp.configChanges
             flags = ActivityInfo.FLAG_HARDWARE_ACCELERATED
+            screenOrientation = comp.screenOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
 

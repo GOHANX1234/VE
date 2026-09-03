@@ -38,6 +38,9 @@ class AndroidBinaryXmlParser {
         private const val ATTR_NAME = 0x01010003
         private const val ATTR_EXPORTED = 0x01010010
         private const val ATTR_PROCESS = 0x01010011
+        private const val ATTR_LAUNCH_MODE = 0x0101001d
+        private const val ATTR_SCREEN_ORIENTATION = 0x0101001e
+        private const val ATTR_CONFIG_CHANGES = 0x0101001f
         private const val ATTR_MIN_SDK_VERSION = 0x0101020c
         private const val ATTR_VERSION_CODE = 0x0101021b
         private const val ATTR_VERSION_NAME = 0x0101021c
@@ -193,6 +196,17 @@ class AndroidBinaryXmlParser {
                         return attr.data
                     }
 
+                    fun getAttrIntOrNull(name: String, resId: Int = 0): Int? {
+                        val attr = attributes.firstOrNull {
+                            it.name == name || (resId != 0 && it.resId == resId)
+                        } ?: return null
+                        return when (attr.dataType) {
+                            TYPE_INT_DEC, TYPE_INT_HEX -> attr.data
+                            TYPE_STRING -> attr.stringValue?.let { parseOrientationString(it) }
+                            else -> attr.data
+                        }
+                    }
+
                     fun getAttrBool(name: String, resId: Int = 0, default: Boolean = false): Boolean {
                         val attr = attributes.firstOrNull {
                             it.name == name || (resId != 0 && it.resId == resId)
@@ -235,12 +249,18 @@ class AndroidBinaryXmlParser {
                             val exported = getAttrBool("exported", ATTR_EXPORTED, false)
                             val process = getAttr("process", ATTR_PROCESS)
                             val theme = getAttr("theme", ATTR_THEME)
+                            val orientation = getAttrIntOrNull("screenOrientation", ATTR_SCREEN_ORIENTATION)
+                            val launchMode = getAttrInt("launchMode", ATTR_LAUNCH_MODE, 0)
+                            val configChanges = getAttrInt("configChanges", ATTR_CONFIG_CHANGES, 0)
 
                             currentComponent = ParsedComponent(
                                 name = compName,
                                 exported = exported,
                                 processName = process,
-                                theme = theme
+                                theme = theme,
+                                screenOrientation = orientation,
+                                launchMode = launchMode,
+                                configChanges = configChanges
                             )
                             currentIntentFilters = mutableListOf()
                         }
@@ -465,6 +485,28 @@ class AndroidBinaryXmlParser {
             ((b1 and 0x7FFF) shl 16) or b2
         } else {
             b1
+        }
+    }
+
+    private fun parseOrientationString(str: String): Int? {
+        return when (str.lowercase()) {
+            "unspecified" -> -1
+            "landscape" -> 0
+            "portrait" -> 1
+            "user" -> 2
+            "behind" -> 3
+            "sensor" -> 4
+            "nosensor" -> 5
+            "sensorlandscape" -> 6
+            "sensorportrait" -> 7
+            "reverselandscape" -> 8
+            "reverseportrait" -> 9
+            "fullsensor" -> 10
+            "userlandscape" -> 11
+            "userportrait" -> 12
+            "fulluser" -> 13
+            "locked" -> 14
+            else -> str.toIntOrNull()
         }
     }
 }

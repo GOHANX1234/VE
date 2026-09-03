@@ -395,6 +395,18 @@ class VeInstrumentation(
             } catch (e: Throwable) {
                 Log.w(TAG, "Could not apply guest theme to $className: ${e.message}")
             }
+
+            // 6. Apply guest Activity screen orientation if declared
+            try {
+                val comp = loadedPkg.manifest.activities.firstOrNull { it.name == className }
+                val requestedOrient = comp?.screenOrientation
+                if (requestedOrient != null && requestedOrient != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+                    activity.requestedOrientation = requestedOrient
+                    Log.i(TAG, "Applied guest Activity requestedOrientation: $requestedOrient to $className")
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "Could not apply requestedOrientation to $className: ${e.message}")
+            }
         } catch (t: Throwable) {
             Log.e(TAG, "Error injecting guest context into Activity: $className", t)
         }

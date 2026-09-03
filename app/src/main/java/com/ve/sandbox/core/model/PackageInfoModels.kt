@@ -22,6 +22,9 @@ data class ParsedComponent(
     val exported: Boolean = false,
     val processName: String? = null,
     val theme: String? = null,
+    val screenOrientation: Int? = null,
+    val launchMode: Int = 0,
+    val configChanges: Int = 0,
     val isLauncher: Boolean = false,
     val intentFilters: List<ParsedIntentFilter> = emptyList()
 )

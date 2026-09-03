@@ -203,15 +203,17 @@ class VeEngine private constructor(private val appContext: Context) {
             flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
         }
 
-        // Determine launchMode from guest manifest
+        // Determine launchMode & screenOrientation from guest manifest
         val comp = loaded.manifest.activities.firstOrNull { it.name == targetClass }
-        val launchMode = android.content.pm.ActivityInfo.LAUNCH_MULTIPLE
+        val launchMode = comp?.launchMode ?: android.content.pm.ActivityInfo.LAUNCH_MULTIPLE
+        val screenOrientation = comp?.screenOrientation ?: android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
 
         // Pre-masquerade Intent directly to StubActivity so ATMS validation in system_server never fails!
         val masqueradedIntent = com.ve.sandbox.core.stub.StubManager.masqueradeIntent(
             targetIntent,
             context.packageName,
-            launchMode
+            launchMode,
+            screenOrientation
         )
         masqueradedIntent.flags = masqueradedIntent.flags or android.content.Intent.FLAG_ACTIVITY_NEW_TASK
 
