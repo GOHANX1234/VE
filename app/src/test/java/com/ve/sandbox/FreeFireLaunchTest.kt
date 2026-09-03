@@ -69,8 +69,24 @@ class FreeFireLaunchTest {
         val providerInfo = com.ve.sandbox.core.hook.PackageInfoSynthesizer.buildProviderInfo(loaded, fileProvider!!)
         assertEquals("com.dts.freefiremax.fileprovider", providerInfo.authority)
 
+        // Verify meta-data parsing and bundle synthesis
+        assertEquals(100067, loaded.manifest.metaData["com.garena.sdk.applicationId"])
+        assertEquals("max", loaded.manifest.metaData["com.garena.sdk.applicationVariant"])
+        assertNotNull("appInfo.metaData must be populated", appInfo.metaData)
+        assertEquals(100067, appInfo.metaData?.getInt("com.garena.sdk.applicationId"))
+        assertEquals("max", appInfo.metaData?.getString("com.garena.sdk.applicationVariant"))
+
+        // Verify APK signature extraction and PackageInfo signatures synthesis
+        assertTrue("InstalledPackage must contain APK signatures", loaded.installedPackage.signatures.isNotEmpty())
+        val pkgInfoWithSigs = com.ve.sandbox.core.hook.PackageInfoSynthesizer.buildPackageInfo(loaded, android.content.pm.PackageManager.GET_SIGNATURES)
+        assertNotNull("PackageInfo signatures must not be null", pkgInfoWithSigs.signatures)
+        assertTrue("PackageInfo signatures must not be empty", pkgInfoWithSigs.signatures!!.isNotEmpty())
+        assertTrue("First signature byte array must be valid X.509 cert", pkgInfoWithSigs.signatures!![0].toByteArray().isNotEmpty())
+
         // 3. Verify ProxyContext storage quarantine and OBB redirection
         val proxyContext = com.ve.sandbox.core.context.ProxyContext(context, loaded)
+        assertSame("createPackageContext for guest package must return same ProxyContext", proxyContext, proxyContext.createPackageContext(loaded.packageName, 0))
+
         val extFiles = proxyContext.getExternalFilesDir(null)
         assertNotNull("External files dir must not be null", extFiles)
         assertTrue("External files dir must exist", extFiles!!.exists())

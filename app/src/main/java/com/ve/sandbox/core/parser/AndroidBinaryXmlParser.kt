@@ -45,6 +45,8 @@ class AndroidBinaryXmlParser {
         private const val ATTR_MIN_SDK_VERSION = 0x0101020c
         private const val ATTR_VERSION_CODE = 0x0101021b
         private const val ATTR_VERSION_NAME = 0x0101021c
+        private const val ATTR_VALUE = 0x01010024
+        private const val ATTR_RESOURCE = 0x01010025
         private const val ATTR_TARGET_SDK_VERSION = 0x01010270
 
         // TypedValue data types
@@ -103,6 +105,8 @@ class AndroidBinaryXmlParser {
 
         // Parsing context stack
         val elementStack = Stack<String>()
+        val appMetaData = mutableMapOf<String, Any>()
+        var currentComponentMetaData = mutableMapOf<String, Any>()
         var currentComponent: ParsedComponent? = null
         var currentIntentFilters = mutableListOf<ParsedIntentFilter>()
         var currentIntentFilter: ParsedIntentFilter? = null
@@ -334,6 +338,29 @@ class AndroidBinaryXmlParser {
                                 currentIntentFilter?.dataSchemes?.add(scheme)
                             }
                         }
+                        "meta-data" -> {
+                            val metaName = getAttr("name", ATTR_NAME)
+                            val valAttr = attributes.firstOrNull { it.name == "value" || (ATTR_VALUE != 0 && it.resId == ATTR_VALUE) }
+                            val resAttr = attributes.firstOrNull { it.name == "resource" || (ATTR_RESOURCE != 0 && it.resId == ATTR_RESOURCE) }
+                            val metaVal: Any? = when {
+                                valAttr != null -> when (valAttr.dataType) {
+                                    TYPE_STRING -> valAttr.stringValue
+                                    TYPE_INT_BOOLEAN -> (valAttr.data != 0)
+                                    TYPE_INT_DEC, TYPE_INT_HEX -> valAttr.data
+                                    TYPE_REFERENCE -> valAttr.data
+                                    else -> valAttr.stringValue ?: valAttr.data
+                                }
+                                resAttr != null -> resAttr.data
+                                else -> null
+                            }
+                            if (metaName != null && metaVal != null) {
+                                if (currentComponent != null) {
+                                    currentComponentMetaData[metaName] = metaVal
+                                } else if (elementStack.contains("application")) {
+                                    appMetaData[metaName] = metaVal
+                                }
+                            }
+                        }
                     }
 
                     buffer.position(chunkStart + chunkSize)
@@ -364,33 +391,50 @@ class AndroidBinaryXmlParser {
                                     filter.actions.contains("android.intent.action.MAIN") &&
                                             filter.categories.contains("android.intent.category.LAUNCHER")
                                 }
-                                activities.add(comp.copy(isLauncher = isLauncher, intentFilters = currentIntentFilters.toList()))
+                                activities.add(comp.copy(
+                                    isLauncher = isLauncher,
+                                    intentFilters = currentIntentFilters.toList(),
+                                    metaData = currentComponentMetaData.toMap()
+                                ))
                             }
                             currentComponent = null
+                            currentComponentMetaData = mutableMapOf()
                             currentIntentFilters = mutableListOf()
                         }
 
                         "service" -> {
                             currentComponent?.let { comp ->
-                                services.add(comp.copy(intentFilters = currentIntentFilters.toList()))
+                                services.add(comp.copy(
+                                    intentFilters = currentIntentFilters.toList(),
+                                    metaData = currentComponentMetaData.toMap()
+                                ))
                             }
                             currentComponent = null
+                            currentComponentMetaData = mutableMapOf()
                             currentIntentFilters = mutableListOf()
                         }
 
                         "receiver" -> {
                             currentComponent?.let { comp ->
-                                receivers.add(comp.copy(intentFilters = currentIntentFilters.toList()))
+                                receivers.add(comp.copy(
+                                    intentFilters = currentIntentFilters.toList(),
+                                    metaData = currentComponentMetaData.toMap()
+                                ))
                             }
                             currentComponent = null
+                            currentComponentMetaData = mutableMapOf()
                             currentIntentFilters = mutableListOf()
                         }
 
                         "provider" -> {
                             currentComponent?.let { comp ->
-                                providers.add(comp.copy(intentFilters = currentIntentFilters.toList()))
+                                providers.add(comp.copy(
+                                    intentFilters = currentIntentFilters.toList(),
+                                    metaData = currentComponentMetaData.toMap()
+                                ))
                             }
                             currentComponent = null
+                            currentComponentMetaData = mutableMapOf()
                             currentIntentFilters = mutableListOf()
                         }
                     }
@@ -418,7 +462,8 @@ class AndroidBinaryXmlParser {
             activities = activities,
             services = services,
             receivers = receivers,
-            providers = providers
+            providers = providers,
+            metaData = appMetaData.toMap()
         )
     }
 

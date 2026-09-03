@@ -69,6 +69,28 @@ class ProxyContext(
 
     override fun getPackageResourcePath(): String = loadedPackage.installedPackage.baseApkPath
 
+    override fun createPackageContext(packageName: String, flags: Int): Context {
+        if (packageName == loadedPackage.packageName) {
+            return this
+        }
+        return super.createPackageContext(packageName, flags)
+    }
+
+    override fun createConfigurationContext(overrideConfiguration: android.content.res.Configuration): Context {
+        val derived = super.createConfigurationContext(overrideConfiguration)
+        return ProxyContext(derived, loadedPackage, guestAppSupplier)
+    }
+
+    override fun createDisplayContext(display: android.view.Display): Context {
+        val derived = super.createDisplayContext(display)
+        return ProxyContext(derived, loadedPackage, guestAppSupplier)
+    }
+
+    override fun createDeviceProtectedStorageContext(): Context {
+        val derived = super.createDeviceProtectedStorageContext()
+        return ProxyContext(derived, loadedPackage, guestAppSupplier)
+    }
+
     override fun getApplicationInfo(): ApplicationInfo {
         cachedApplicationInfo?.let { return it }
         val info = com.ve.sandbox.core.hook.PackageInfoSynthesizer.buildApplicationInfo(loadedPackage)

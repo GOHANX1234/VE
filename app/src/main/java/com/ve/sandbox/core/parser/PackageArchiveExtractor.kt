@@ -137,7 +137,8 @@ class PackageArchiveExtractor(
             splitApkPaths = emptyList(),
             nativeLibDir = nativeLibDir.absolutePath,
             dataDir = dataDir.absolutePath,
-            manifest = manifest
+            manifest = manifest,
+            signatures = extractSignatures(targetBaseApk)
         )
     }
 
@@ -183,7 +184,8 @@ class PackageArchiveExtractor(
             splitApkPaths = splitPaths,
             nativeLibDir = nativeLibDir.absolutePath,
             dataDir = dataDir.absolutePath,
-            manifest = manifest
+            manifest = manifest,
+            signatures = extractSignatures(targetBaseApk)
         )
     }
 
@@ -232,7 +234,8 @@ class PackageArchiveExtractor(
             splitApkPaths = splitPaths,
             nativeLibDir = nativeLibDir.absolutePath,
             dataDir = dataDir.absolutePath,
-            manifest = manifest
+            manifest = manifest,
+            signatures = extractSignatures(targetBaseApk)
         )
     }
 
@@ -275,7 +278,8 @@ class PackageArchiveExtractor(
             splitApkPaths = splitPaths,
             nativeLibDir = nativeLibDir.absolutePath,
             dataDir = dataDir.absolutePath,
-            manifest = manifest
+            manifest = manifest,
+            signatures = extractSignatures(targetBaseApk)
         )
     }
 
@@ -358,5 +362,36 @@ class PackageArchiveExtractor(
                 }
             }
         }
+    }
+
+    fun extractSignatures(apkFile: File): List<ByteArray> {
+        val certsList = mutableListOf<ByteArray>()
+        try {
+            ZipFile(apkFile).use { zip ->
+                val certEntries = zip.entries().asSequence().filter {
+                    it.name.startsWith("META-INF/") && (
+                        it.name.endsWith(".RSA", ignoreCase = true) ||
+                        it.name.endsWith(".DSA", ignoreCase = true) ||
+                        it.name.endsWith(".EC", ignoreCase = true)
+                    )
+                }.toList()
+
+                for (entry in certEntries) {
+                    val bytes = zip.getInputStream(entry).use { it.readBytes() }
+                    try {
+                        val cf = java.security.cert.CertificateFactory.getInstance("X.509")
+                        val certs = cf.generateCertificates(java.io.ByteArrayInputStream(bytes))
+                        for (cert in certs) {
+                            certsList.add(cert.encoded)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to parse cert ${entry.name}: ${e.message}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to extract signatures from ${apkFile.name}: ${e.message}")
+        }
+        return certsList
     }
 }

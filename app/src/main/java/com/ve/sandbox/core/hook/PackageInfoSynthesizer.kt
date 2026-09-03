@@ -42,6 +42,22 @@ object PackageInfoSynthesizer {
         }.toTypedArray()
     }
 
+    fun mapToBundle(map: Map<String, Any>): android.os.Bundle {
+        val bundle = android.os.Bundle()
+        for ((k, v) in map) {
+            when (v) {
+                is String -> bundle.putString(k, v)
+                is Int -> bundle.putInt(k, v)
+                is Long -> bundle.putLong(k, v)
+                is Float -> bundle.putFloat(k, v)
+                is Double -> bundle.putDouble(k, v)
+                is Boolean -> bundle.putBoolean(k, v)
+                else -> bundle.putString(k, v.toString())
+            }
+        }
+        return bundle
+    }
+
     fun buildApplicationInfo(loaded: LoadedPackage, flags: Int = 0): ApplicationInfo {
         val manifest = loaded.manifest
         val primaryAbiDir = getPrimaryAbiDir(loaded.installedPackage.nativeLibDir)
@@ -63,6 +79,7 @@ object PackageInfoSynthesizer {
             minSdkVersion = manifest.minSdkVersion
             uid = Process.myUid()
             this.flags = ApplicationInfo.FLAG_HAS_CODE or ApplicationInfo.FLAG_ALLOW_BACKUP
+            metaData = mapToBundle(manifest.metaData)
         }
     }
 
@@ -80,6 +97,18 @@ object PackageInfoSynthesizer {
             @Suppress("DEPRECATION")
             versionCode = manifest.versionCode.toInt()
             applicationInfo = appInfo
+
+            if (loaded.installedPackage.signatures.isNotEmpty()) {
+                val sigs = loaded.installedPackage.signatures.map { Signature(it) }.toTypedArray()
+                signatures = sigs
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    try {
+                        signingInfo = SigningInfo()
+                    } catch (e: Throwable) {
+                        // ignore
+                    }
+                }
+            }
 
             if ((flags and PackageManager.GET_PERMISSIONS) != 0) {
                 requestedPermissions = manifest.permissions.toTypedArray()
@@ -121,6 +150,7 @@ object PackageInfoSynthesizer {
             configChanges = comp.configChanges
             flags = ActivityInfo.FLAG_HARDWARE_ACCELERATED
             screenOrientation = comp.screenOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            metaData = mapToBundle(comp.metaData)
         }
     }
 
@@ -135,6 +165,7 @@ object PackageInfoSynthesizer {
             applicationInfo = appInfo
             exported = comp.exported
             processName = comp.processName ?: loaded.packageName
+            metaData = mapToBundle(comp.metaData)
         }
     }
 
@@ -150,6 +181,7 @@ object PackageInfoSynthesizer {
             exported = comp.exported
             authority = comp.authorities
             processName = comp.processName ?: loaded.packageName
+            metaData = mapToBundle(comp.metaData)
         }
     }
 

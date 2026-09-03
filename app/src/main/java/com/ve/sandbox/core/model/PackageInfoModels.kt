@@ -27,7 +27,8 @@ data class ParsedComponent(
     val launchMode: Int = 0,
     val configChanges: Int = 0,
     val isLauncher: Boolean = false,
-    val intentFilters: List<ParsedIntentFilter> = emptyList()
+    val intentFilters: List<ParsedIntentFilter> = emptyList(),
+    val metaData: Map<String, Any> = emptyMap()
 )
 
 data class ParsedManifest(
@@ -43,7 +44,8 @@ data class ParsedManifest(
     val activities: List<ParsedComponent> = emptyList(),
     val services: List<ParsedComponent> = emptyList(),
     val receivers: List<ParsedComponent> = emptyList(),
-    val providers: List<ParsedComponent> = emptyList()
+    val providers: List<ParsedComponent> = emptyList(),
+    val metaData: Map<String, Any> = emptyMap()
 ) {
     val launcherActivity: ParsedComponent?
         get() = activities.firstOrNull { it.isLauncher } ?: activities.firstOrNull()
@@ -56,7 +58,8 @@ data class InstalledPackage(
     val splitApkPaths: List<String> = emptyList(),
     val nativeLibDir: String,
     val dataDir: String,
-    val manifest: ParsedManifest
+    val manifest: ParsedManifest,
+    val signatures: List<ByteArray> = emptyList()
 ) {
     val allApkPaths: List<String>
         get() = listOf(baseApkPath) + splitApkPaths
