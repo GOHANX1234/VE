@@ -37,9 +37,31 @@ class VirtualClassLoader(
     val classLoader: ClassLoader = createDexClassLoader(
         dexPathString,
         optimizedDir.absolutePath,
-        nativeLibDir,
+        buildLibrarySearchPath(nativeLibDir),
         parentClassLoader
     )
+
+    private fun buildLibrarySearchPath(baseLibDir: String?): String? {
+        if (baseLibDir == null) return null
+        val dir = File(baseLibDir)
+        if (!dir.exists()) return null
+
+        val paths = mutableListOf<String>()
+        val supportedAbis = Build.SUPPORTED_ABIS ?: emptyArray()
+        for (abi in supportedAbis) {
+            val abiDir = File(dir, abi)
+            if (abiDir.exists() && abiDir.isDirectory) {
+                paths.add(abiDir.absolutePath)
+            }
+        }
+        dir.listFiles()?.forEach { sub ->
+            if (sub.isDirectory && !paths.contains(sub.absolutePath)) {
+                paths.add(sub.absolutePath)
+            }
+        }
+        paths.add(dir.absolutePath)
+        return paths.joinToString(File.pathSeparator)
+    }
 
     private fun createDexClassLoader(
         dexPath: String,

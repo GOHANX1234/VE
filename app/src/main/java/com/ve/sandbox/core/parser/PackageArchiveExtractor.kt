@@ -297,23 +297,20 @@ class PackageArchiveExtractor(
     }
 
     private fun extractNativeLibraries(apkFile: File, targetLibDir: File) {
-        val supportedAbis = getSupportedAbis()
         ZipFile(apkFile).use { zip ->
             val entries = zip.entries()
             while (entries.hasMoreElements()) {
                 val entry = entries.nextElement()
                 if (entry.name.startsWith("lib/") && entry.name.endsWith(".so")) {
                     val parts = entry.name.split("/")
-                    if (parts.size == 3) {
+                    if (parts.size >= 3) {
                         val abi = parts[1]
-                        val soName = parts[2]
-                        if (supportedAbis.contains(abi)) {
-                            val abiDir = File(targetLibDir, abi).apply { mkdirs() }
-                            val outFile = File(abiDir, soName)
-                            zip.getInputStream(entry).use { input ->
-                                FileOutputStream(outFile).use { output ->
-                                    input.copyTo(output)
-                                }
+                        val soName = parts.last()
+                        val abiDir = File(targetLibDir, abi).apply { mkdirs() }
+                        val outFile = File(abiDir, soName)
+                        zip.getInputStream(entry).use { input ->
+                            FileOutputStream(outFile).use { output ->
+                                input.copyTo(output)
                             }
                         }
                     }
